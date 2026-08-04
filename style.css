@@ -1,0 +1,748 @@
+/* ============================================================
+   Story Toolkit — unified styles
+   Sections: Director (pd-), Forge (sf-), Archive (sa-),
+   Toolkit core + Guide (stk-)
+   ============================================================ */
+
+/* ===== Plot Director — Extension Styles ===== */
+/* Modals use ST's native Popup — we only style the content inside. */
+
+/* --- Panel in Extensions Sidebar --- */
+#plot_director_panel .pd-status {
+    font-size: 0.9em;
+    padding: 6px 8px;
+    margin-bottom: 8px;
+    border-radius: 4px;
+    background: rgba(0,0,0,0.25);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+#plot_director_panel .pd-status-dot {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+#plot_director_panel .pd-status-dot.inactive { background: #666; }
+#plot_director_panel .pd-status-dot.active   { background: #4caf50; }
+#plot_director_panel .pd-status-dot.complete { background: #2196f3; }
+
+#plot_director_panel .pd-btn-row {
+    display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px;
+}
+#plot_director_panel .pd-btn-row .menu_button {
+    flex: 1; min-width: 0; font-size: 0.85em; padding: 4px 8px; white-space: nowrap;
+}
+#plot_director_panel .pd-toggle-row {
+    display: flex; align-items: center; gap: 6px; font-size: 0.85em; padding: 4px 0;
+}
+
+/* --- Popup Content --- */
+.pd-popup-content {
+    text-align: left;
+}
+
+/* --- Form Fields (inherit ST popup theme colors) --- */
+.pd-field { margin-bottom: 12px; }
+.pd-field label {
+    display: block; font-size: 0.85em; margin-bottom: 4px; opacity: 0.7;
+}
+.pd-field select,
+.pd-field textarea,
+.pd-field input[type="text"],
+.pd-field input[type="number"],
+.pd-token-input {
+    width: 100%;
+    padding: 6px 8px;
+    box-sizing: border-box;
+    font-family: inherit;
+    font-size: 0.95em;
+}
+.pd-field textarea { min-height: 60px; resize: vertical; }
+
+.pd-range-row { display: flex; align-items: center; gap: 8px; }
+.pd-range-row input[type="range"] { flex: 1; }
+.pd-range-val { min-width: 28px; text-align: center; font-size: 0.9em; font-weight: 600; }
+
+/* --- Genre Checkbox Grid --- */
+.pd-genre-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 2px 12px;
+}
+.pd-genre-grid label {
+    display: flex; align-items: center; gap: 5px;
+    font-size: 0.85em; cursor: pointer; padding: 3px 0;
+}
+
+/* --- Profile Select --- */
+.pd-profile-select {
+    width: 100%; padding: 5px 6px; box-sizing: border-box;
+    font-family: inherit; font-size: 0.85em;
+}
+
+/* --- Tabs --- */
+.pd-tabs {
+    display: flex; gap: 0; margin-bottom: 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.15);
+}
+.pd-tab {
+    padding: 8px 16px; font-size: 0.9em; cursor: pointer; opacity: 0.5;
+    border-bottom: 2px solid transparent; transition: opacity 0.15s;
+    display: flex; align-items: center;
+}
+.pd-tab:hover { opacity: 0.8; }
+.pd-tab.active { opacity: 1; border-bottom-color: #e88c3a; }
+.pd-tab-spacer { flex: 1; }
+
+/* --- Step List --- */
+.pd-step-list { list-style: none; padding: 0; margin: 0; }
+
+.pd-step-item {
+    display: flex; align-items: flex-start; gap: 8px;
+    padding: 8px 6px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    border-radius: 4px;
+}
+.pd-step-item:hover { background: rgba(255,255,255,0.04); }
+
+.pd-step-badge {
+    min-width: 24px; height: 24px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.75em; font-weight: 700; color: #fff;
+    flex-shrink: 0; margin-top: 2px;
+}
+.pd-step-badge.completed { background: #4caf50; }
+.pd-step-badge.active { background: #e88c3a; animation: pd-pulse 2s ease-in-out infinite; }
+.pd-step-badge.pending { background: #555; }
+
+.pd-step-content { flex: 1; min-width: 0; }
+.pd-step-text {
+    font-size: 0.88em; line-height: 1.45; word-break: break-word;
+}
+
+.pd-step-text.spoiler-blur {
+    filter: blur(5px); user-select: none; cursor: pointer; transition: filter 0.25s;
+}
+.pd-step-text.spoiler-blur:hover { filter: blur(3px); }
+.pd-step-text.spoiler-blur.revealed { filter: none; user-select: auto; cursor: auto; }
+
+.pd-step-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.pd-step-actions button {
+    background: none; border: 1px solid rgba(255,255,255,0.2);
+    color: inherit; opacity: 0.65;
+    padding: 4px 8px; border-radius: 3px; cursor: pointer; font-size: 0.85em;
+    min-width: 32px; min-height: 32px;
+}
+.pd-step-actions button:hover { opacity: 1; }
+
+/* --- Edit Step Inline --- */
+.pd-step-edit-area {
+    width: 100%; min-height: 50px; margin-top: 6px; padding: 6px;
+    box-sizing: border-box; font-family: inherit; font-size: 0.85em; resize: vertical;
+}
+
+/* --- Raw Text View --- */
+.pd-raw-textarea {
+    width: 100%; min-height: 300px; padding: 10px;
+    box-sizing: border-box; font-family: monospace;
+    font-size: 0.85em; line-height: 1.5; resize: vertical;
+}
+
+/* --- Misc --- */
+.pd-divider {
+    border: none; border-top: 1px solid rgba(255,255,255,0.08); margin: 10px 0;
+}
+.pd-note {
+    font-size: 0.8em; opacity: 0.5; font-style: italic; margin-top: 4px;
+}
+
+@keyframes pd-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+/* --- Mobile: minor touch-target tweaks only. Popup layout is ST's job. --- */
+@media (max-width: 768px) {
+    .pd-genre-grid { grid-template-columns: 1fr 1fr; }
+    .pd-genre-grid label { min-height: 30px; }
+    .pd-field select, .pd-field textarea,
+    .pd-field input[type="text"], .pd-field input[type="number"],
+    .pd-token-input, .pd-raw-textarea {
+        font-size: 16px; /* prevents iOS zoom */
+    }
+    .pd-step-actions button { min-width: 38px; min-height: 38px; }
+}
+
+/* ═══ Story Forge ═══ */
+
+.sf-section { margin-bottom: 8px; }
+.sf-section h4 { margin: 4px 0 8px 0; }
+.sf-section label {
+    display: block;
+    margin: 6px 0 3px 0;
+    font-size: 0.9em;
+    opacity: 0.75;
+}
+.sf-hr {
+    border: none;
+    border-top: 1px solid var(--SmartThemeBorderColor, #555);
+    opacity: 0.25;
+    margin: 10px 0;
+}
+.sf-muted { opacity: 0.5; font-size: 0.85em; }
+.sf-empty {
+    text-align: center;
+    opacity: 0.4;
+    padding: 14px;
+    font-style: italic;
+}
+
+/* ── Buttons grid ── */
+
+.sf-buttons-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-bottom: 6px;
+}
+.sf-action-btn {
+    flex: 1 1 auto;
+    min-width: 80px;
+    text-align: center;
+    font-size: 0.9em;
+    padding: 6px 10px;
+}
+.sf-action-btn:disabled {
+    opacity: 0.4;
+    pointer-events: none;
+}
+.sf-extra {
+    width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
+}
+
+/* ── Results ── */
+
+.sf-results-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+.sf-results-title {
+    font-weight: bold;
+    font-size: 0.95em;
+    flex: 1;
+}
+.sf-results-nav {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.sf-nav-btn {
+    padding: 2px 8px;
+    font-size: 0.85em;
+    min-width: auto;
+}
+.sf-gen-counter {
+    font-size: 0.8em;
+    opacity: 0.6;
+    min-width: 32px;
+    text-align: center;
+}
+.sf-results-list {
+    max-height: 450px;
+    overflow-y: auto;
+}
+.sf-loading {
+    text-align: center;
+    padding: 20px;
+    opacity: 0.6;
+}
+
+/* ── Cards ── */
+
+.sf-card {
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    border-radius: 5px;
+    margin-bottom: 5px;
+    background: var(--SmartThemeBlurTintColor, rgba(0,0,0,0.2));
+    padding: 8px 10px;
+}
+.sf-card-text {
+    font-size: 0.9em;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin-bottom: 6px;
+}
+.sf-card-actions {
+    display: flex;
+    gap: 4px;
+    justify-content: flex-end;
+}
+.sf-card-btn {
+    padding: 2px 8px;
+    font-size: 0.8em;
+    min-width: auto;
+}
+
+/* ── Archive ── */
+
+.sf-archive-list {
+    max-height: 350px;
+    overflow-y: auto;
+}
+.sf-archive-item {
+    border: 1px solid var(--SmartThemeBorderColor, #444);
+    border-radius: 4px;
+    margin-bottom: 5px;
+    padding: 7px 10px;
+    background: var(--SmartThemeBlurTintColor, rgba(0,0,0,0.15));
+}
+.sf-archive-text {
+    font-size: 0.88em;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin-bottom: 4px;
+}
+.sf-archive-meta {
+    font-size: 0.75em;
+    opacity: 0.4;
+    margin-bottom: 4px;
+}
+.sf-clear-btn {
+    width: 100%;
+    margin-top: 6px;
+    opacity: 0.7;
+}
+
+/* ── Modal ── */
+
+.sf-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+}
+.sf-modal {
+    background: var(--SmartThemeBlurTintColor, #2a2a2a);
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    border-radius: 8px;
+    padding: 18px;
+    width: 90%;
+    max-width: 550px;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+.sf-modal h4 { margin: 0 0 10px 0; }
+.sf-modal label {
+    display: block;
+    margin: 8px 0 3px 0;
+    font-size: 0.9em;
+    opacity: 0.75;
+}
+.sf-modal input[type="text"],
+.sf-modal textarea {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+/* ── Button manager list ── */
+
+.sf-btn-list { margin-bottom: 6px; }
+.sf-btn-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 8px;
+    border: 1px solid var(--SmartThemeBorderColor, #444);
+    border-radius: 4px;
+    margin-bottom: 4px;
+}
+.sf-btn-row-label { font-weight: bold; flex: 1; }
+.sf-btn-row-actions { display: flex; gap: 4px; }
+
+/* ── Popup (from extensions menu) ── */
+
+.sf-popup {
+    max-width: 650px;
+    width: 95%;
+    max-height: 85vh;
+}
+.sf-popup-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+.sf-popup-header h4 { margin: 0; }
+.sf-popup .sf-extra { margin: 8px 0; }
+.sf-popup .sf-results-list {
+    max-height: 55vh;
+    overflow-y: auto;
+    margin-top: 8px;
+}
+
+/* ── Mobile: fullscreen modal (same fix as Plot Director) ── */
+
+@media (max-width: 768px) {
+    .sf-modal-overlay {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        width: 100% !important;
+        height: 100% !important;
+        display: block !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        overflow: hidden !important;
+        z-index: 99999 !important;
+        background: var(--SmartThemeBlurTintColor, #1a1b2e) !important;
+    }
+    .sf-modal,
+    .sf-popup {
+        position: absolute !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        max-height: 100% !important;
+        height: 100% !important;
+        border-radius: 0 !important;
+        border: none !important;
+        margin: 0 !important;
+        padding: 12px !important;
+        box-sizing: border-box !important;
+        overflow-y: auto !important;
+        -webkit-overflow-scrolling: touch;
+    }
+    .sf-popup .sf-results-list {
+        max-height: none;
+        overflow-y: visible;
+    }
+    .sf-modal input[type="text"],
+    .sf-modal textarea,
+    .sf-popup input,
+    .sf-popup textarea {
+        font-size: 16px !important; /* prevent iOS auto-zoom */
+    }
+    .sf-card-btn {
+        min-height: 36px;
+        min-width: 36px;
+        font-size: 1em;
+    }
+    .sf-action-btn {
+        min-height: 40px;
+        font-size: 1em;
+    }
+}
+
+/* ── Story Archive ── */
+
+.sa-panel {
+    padding: 5px 0;
+}
+
+.sa-section {
+    margin-bottom: 10px;
+}
+
+.sa-section h4 {
+    margin: 5px 0 10px 0;
+}
+
+.sa-section label {
+    display: block;
+    margin: 8px 0 3px 0;
+    font-size: 0.9em;
+    opacity: 0.8;
+}
+
+.sa-section input[type="text"],
+.sa-section textarea {
+    width: 100%;
+    box-sizing: border-box;
+    margin-bottom: 4px;
+}
+
+.sa-section > button,
+.sa-section .sa-form > button {
+    margin-top: 6px;
+    width: 100%;
+}
+
+.sa-hr {
+    border: none;
+    border-top: 1px solid var(--SmartThemeBorderColor, #555);
+    opacity: 0.3;
+    margin: 12px 0;
+}
+
+/* ── Entry list ── */
+
+.sa-entry-list {
+    max-height: 500px;
+    overflow-y: auto;
+    margin-top: 8px;
+}
+
+.sa-entry {
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    border-radius: 5px;
+    margin-bottom: 6px;
+    background: var(--SmartThemeBlurTintColor, rgba(0, 0, 0, 0.2));
+}
+
+.sa-entry-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 10px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.sa-entry-header:hover {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.sa-entry-title {
+    font-weight: bold;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sa-entry-toggle {
+    font-size: 0.8em;
+    opacity: 0.5;
+    margin-left: 8px;
+    flex-shrink: 0;
+}
+
+/* ── Tags ── */
+
+.sa-entry-tags {
+    padding: 0 10px 5px 10px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.sa-tag {
+    background: var(--SmartThemeQuoteColor, #4a6);
+    color: var(--SmartThemeBodyColor, #fff);
+    padding: 1px 7px;
+    border-radius: 3px;
+    font-size: 0.75em;
+    opacity: 0.85;
+}
+
+/* ── Source line ── */
+
+.sa-entry-source {
+    padding: 0 10px 5px 10px;
+    font-size: 0.75em;
+    opacity: 0.45;
+}
+
+/* ── Body (expandable) ── */
+
+.sa-entry-body {
+    padding: 8px 10px;
+    border-top: 1px solid var(--SmartThemeBorderColor, #444);
+}
+
+.sa-entry-text {
+    font-size: 0.9em;
+    line-height: 1.55;
+    max-height: 300px;
+    overflow-y: auto;
+    margin-bottom: 8px;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* ── Action buttons ── */
+
+.sa-entry-actions {
+    display: flex;
+    gap: 5px;
+}
+
+.sa-entry-actions button {
+    flex: 1;
+    font-size: 0.8em;
+    padding: 4px 8px;
+}
+
+/* ── Counter ── */
+
+.sa-entry-count {
+    font-size: 0.8em;
+    opacity: 0.55;
+    margin-top: 5px;
+}
+
+/* ── Empty state ── */
+
+.sa-empty {
+    text-align: center;
+    opacity: 0.45;
+    padding: 20px;
+    font-style: italic;
+}
+
+/* ── Export / Import row ── */
+
+.sa-export-import {
+    display: flex;
+    gap: 5px;
+}
+
+.sa-export-import button {
+    flex: 1;
+}
+
+/* ── Edit modal ── */
+
+.sa-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+}
+
+.sa-modal {
+    background: var(--SmartThemeBlurTintColor, #2a2a2a);
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    border-radius: 8px;
+    padding: 20px;
+    width: 90%;
+    max-width: 600px;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+.sa-modal h4 {
+    margin: 0 0 12px 0;
+}
+
+.sa-modal label {
+    display: block;
+    margin: 10px 0 3px 0;
+    font-size: 0.9em;
+    opacity: 0.8;
+}
+
+.sa-modal input[type="text"],
+.sa-modal textarea {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.sa-modal-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 15px;
+}
+
+.sa-modal-actions button {
+    flex: 1;
+}
+
+/* ═══ Story Toolkit core + Guide ═══ */
+
+.stk-section { margin-bottom: 8px; }
+
+.stk-module-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 6px 0;
+    cursor: pointer;
+}
+.stk-module-row input { margin: 0; }
+
+.stk-note {
+    font-size: 0.8em;
+    opacity: 0.55;
+    margin: 8px 0 2px 0;
+}
+
+/* Guide: active indicator in wand menu */
+#stk_guide_menu_item.stk-guide-active .extensionsMenuExtensionButton {
+    color: var(--golden, #d4af37);
+}
+#stk_guide_menu_item.stk-guide-active span {
+    font-weight: 600;
+}
+
+/* Guide: modal */
+.stk-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 12px;
+}
+.stk-modal {
+    background: var(--SmartThemeBlurTintColor, #1a1a1a);
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    border-radius: 8px;
+    padding: 16px;
+    width: 100%;
+    max-width: 520px;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+.stk-modal h4 { margin: 0 0 10px 0; }
+.stk-modal textarea { width: 100%; box-sizing: border-box; }
+
+.stk-guide-modes {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 10px 0;
+}
+.stk-guide-mode {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 8px;
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    border-radius: 6px;
+    cursor: pointer;
+    opacity: 0.85;
+}
+.stk-guide-mode:has(input:checked) {
+    border-color: var(--golden, #d4af37);
+    opacity: 1;
+}
+.stk-guide-mode input { margin-top: 3px; }
+.stk-guide-mode small { opacity: 0.65; }
+
+.stk-modal-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 12px;
+}
+.stk-modal-actions .menu_button { flex: 1; }

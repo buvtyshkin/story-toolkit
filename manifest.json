@@ -1,0 +1,12 @@
+{
+    "display_name": "Story Toolkit",
+    "loading_order": 1,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "buvtyshkin",
+    "version": "1.0.0",
+    "homePage": "https://github.com/buvtyshkin/story-toolkit",
+    "auto_update": true
+}
