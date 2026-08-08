@@ -212,11 +212,19 @@ function onPromptReady(data) {
         const text = buildInjectionText();
         if (!text) return;
         const chat = data.chat;
-        if (!Array.isArray(chat)) { console.warn("[PD] prompt data.chat is not an array"); return; }
-        // Insert at depth 1: right before the last message
-        const insertAt = Math.max(0, chat.length - 1);
+        if (!Array.isArray(chat) || !chat.length) { console.warn("[PD] prompt data.chat is not an array or empty"); return; }
+        // Хвост массива вместо length-1: старый вариант оставлял шаг
+        // над инъекциями глубин пресета, в мёртвой зоне выше стены
+        // инструкций. Guide регистрируется после Director, поэтому при
+        // одновременной работе шаг ляжет выше гайда — точечное указание
+        // приоритетнее. Если последний элемент — префилл ассистента,
+        // встаём перед ним.
+        let insertAt = chat.length;
+        if (chat[chat.length - 1]?.role === "assistant" && chat.length > 1) {
+            insertAt = chat.length - 1;
+        }
         chat.splice(insertAt, 0, { role: "system", content: text });
-        console.log("[PD] ✓ Step injected into outgoing prompt at " + insertAt + "/" + chat.length);
+        console.log("[PD] ✓ Step injected at tail (" + insertAt + "/" + chat.length + ")");
     } catch(e) {
         console.error("[PD] onPromptReady error:", e);
     }

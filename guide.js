@@ -77,11 +77,19 @@ function onPromptReady(data) {
         const g = getGuide();
         if (!g) return;
         const chat = data.chat;
-        if (!Array.isArray(chat)) return;
-        // Depth 1: right before the last message → below the cache breakpoint
-        const insertAt = Math.max(0, chat.length - 1);
+        if (!Array.isArray(chat) || !chat.length) return;
+        // В самый конец массива на момент события — вплотную к последнему
+        // сообщению игрока. Всё, что ядро вплетает позже (инъекции глубин
+        // пресета), ложится по своим правилам, но гайд гарантированно
+        // не окажется над стеной инструкций (старый вариант length-1
+        // оставлял его на фактической глубине 4-5). Если последний
+        // элемент — префилл ассистента, встаём перед ним.
+        let insertAt = chat.length;
+        if (chat[chat.length - 1]?.role === "assistant" && chat.length > 1) {
+            insertAt = chat.length - 1;
+        }
         chat.splice(insertAt, 0, { role: "system", content: g.text });
-        console.log(`${TAG} ✓ Injected at depth 1 (${insertAt}/${chat.length})`);
+        console.log(`${TAG} ✓ Injected at tail (${insertAt}/${chat.length})`);
     } catch (e) {
         console.error(`${TAG} onPromptReady error:`, e);
     }
