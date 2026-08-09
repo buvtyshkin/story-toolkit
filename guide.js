@@ -89,6 +89,14 @@ function onPromptReady(data) {
             insertAt = chat.length - 1;
         }
         chat.splice(insertAt, 0, { role: "system", content: g.text });
+        // Помечаем auto-гайд отработавшим только в момент фактической
+        // инъекции в боевую генерацию. Удаление произойдёт на СЛЕДУЮЩЕМ
+        // MESSAGE_SENT — до этого гайд переживает свайпы и регенерации
+        // того ответа, на который был нацелен.
+        if (g.mode === "auto" && !g.consumed) {
+            g.consumed = true;
+            saveMeta();
+        }
         console.log(`${TAG} ✓ Injected at tail (${insertAt}/${chat.length})`);
     } catch (e) {
         console.error(`${TAG} onPromptReady error:`, e);
@@ -99,7 +107,11 @@ function onPromptReady(data) {
 
 function onMessageSent() {
     const g = getGuide();
-    if (g && g.mode === "auto") {
+    // MESSAGE_SENT стреляет ДО сборки промпта, поэтому чистить гайд
+    // по первому же событию нельзя — он ещё не дошёл до модели.
+    // Удаляем только уже отработавший (consumed) гайд: это сообщение —
+    // то самое "следующее", игрок двинулся дальше.
+    if (g && g.mode === "auto" && g.consumed) {
         clearGuide(true);
         toastr.info("Guide: указание отработало и снято");
     }
