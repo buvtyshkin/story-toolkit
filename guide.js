@@ -175,8 +175,13 @@ function openGuidePopup() {
     document.body.appendChild(overlay);
 
     const ta = document.getElementById("stk-guide-text");
-    ta.focus();
-    ta.selectionStart = ta.selectionEnd = ta.value.length;
+    // Autofocus raises the on-screen keyboard the instant the modal appears,
+    // which halves the visible area and scrolls the dialog around. Let phone
+    // users tap the field when they are ready.
+    if (!window.matchMedia("(max-width: 768px)").matches) {
+        ta.focus();
+        ta.selectionStart = ta.selectionEnd = ta.value.length;
+    }
 
     document.getElementById("stk-guide-apply").addEventListener("click", () => {
         const text = ta.value.trim();

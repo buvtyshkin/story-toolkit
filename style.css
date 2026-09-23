@@ -700,9 +700,14 @@
     background: rgba(0, 0, 0, 0.55);
     z-index: 9999;
     display: flex;
-    align-items: center;
     justify-content: center;
     padding: 12px;
+    /* The overlay scrolls, not the modal. On phones the on-screen keyboard
+       shrinks the visible area without changing vh, so a vh-based max-height
+       on the modal never engages its own scrollbar and the overflow has to be
+       absorbed here instead. */
+    overflow-y: auto;
+    overscroll-behavior: contain;
 }
 .stk-modal {
     background: var(--SmartThemeBlurTintColor, #1a1a1a);
@@ -711,8 +716,12 @@
     padding: 16px;
     width: 100%;
     max-width: 520px;
-    max-height: 90vh;
     overflow-y: auto;
+    /* Auto cross-axis margins centre the modal while it fits and collapse to
+       zero once it does not, so its top edge stays scrollable into view.
+       align-items: center would instead push the top past the overlay's
+       scroll origin, where scrollTop cannot follow it. */
+    margin: auto 0;
 }
 .stk-modal h4 { margin: 0 0 10px 0; }
 .stk-modal textarea { width: 100%; box-sizing: border-box; }
