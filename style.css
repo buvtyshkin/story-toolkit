@@ -697,8 +697,20 @@
 .stk-modal-overlay {
     position: fixed;
     inset: 0;
+    /* inset alone is not enough. SillyTavern sets transform: translateZ(0) on
+       <html>, which makes <html> the containing block for every fixed element,
+       and on phones mobile-styles.css turns <body> into position: fixed, which
+       takes it out of flow and collapses <html> to zero height. inset: 0 then
+       resolves against that zero-height box and the overlay shrinks to its own
+       24px of padding: a thin strip at the top of the screen with the modal
+       clipped inside. An explicit viewport height does not depend on the
+       containing block, so it holds whatever <html> collapses to. */
+    height: 100vh;
+    height: 100dvh;
     background: rgba(0, 0, 0, 0.55);
-    z-index: 9999;
+    /* Above other extensions' floating buttons (Memory Books uses 10000), below
+       toastr (999999), so Guide's own warnings still show over the modal. */
+    z-index: 100000;
     display: flex;
     justify-content: center;
     padding: 12px;
