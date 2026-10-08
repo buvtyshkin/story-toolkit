@@ -18,6 +18,7 @@ const TAG = "[STK Helper]";
 const META_KEY = "little_helper";
 const MENU_ITEM_ID = "stk_helper_menu_item";
 const OVERLAY_ID = "stk-helper-overlay";
+const PROMPT_OVERLAY_ID = "stk-helper-prompt-overlay";
 const MAX_COUNT = 10;
 
 const DEFAULT_PROMPTS = {
@@ -48,15 +49,18 @@ const PROMPT_FIELDS = [
 // Module state. `busy` is read by Guide so it stays out of our requests.
 let busy = false;
 let draftDirection = "";
+// Fisher Cost usage that arrived before its generation was stored: tag → record.
+const earlyUsage = new Map();
 
 export function isHelperGenerating() {
     return busy;
 }
 
-// Fisher Cost reads the global flag to book these requests under Little Helper.
-function setBusy(value) {
-    busy = value;
-    window.__stkHelperBusy = value;
+// Fisher Cost reads the global flag to book these requests under Little Helper,
+// and echoes the tag back with the request's usage (event "fisher-cost:usage").
+function setBusy(tag) {
+    busy = !!tag;
+    window.__stkHelperBusy = tag || false;
 }
 
 // ── Settings (global) ──
@@ -101,9 +105,27 @@ function addGeneration(gen) {
     if (!m) return;
     if (!history()) m[META_KEY] = { generations: [], index: -1 };
     const h = m[META_KEY];
+    if (earlyUsage.has(gen.tag)) {
+        gen.usage = earlyUsage.get(gen.tag);
+        earlyUsage.delete(gen.tag);
+    }
     h.generations.push(gen);
     h.index = h.generations.length - 1;
     saveMeta();
+}
+
+/** Fisher Cost reports a request's usage; it may come before or after the generation is stored. */
+function onFisherUsage(e) {
+    const { tag, rec } = e?.detail || {};
+    if (!tag || !rec) return;
+    const gen = history()?.generations.find((g) => g.tag === tag);
+    if (!gen) {
+        earlyUsage.set(tag, rec);
+        return;
+    }
+    gen.usage = rec;
+    saveMeta();
+    renderPopup();
 }
 
 function setIndex(i) {
@@ -208,7 +230,8 @@ async function generate() {
     }
     const needSwitch = profile && profile !== original;
 
-    setBusy(true);
+    const tag = uid();
+    setBusy(tag);
     renderPopup();
     let raw = "";
     try {
@@ -226,10 +249,11 @@ async function generate() {
                 toastr.warning(`Little Helper: не удалось вернуть профиль «${original}» — проверьте подключение!`);
             }
         }
-        setBusy(false);
+        setBusy(null);
     }
 
     if (currentChatId() !== chatId) {
+        earlyUsage.delete(tag);
         toastr.warning("Little Helper: чат сменился во время генерации — варианты не сохранены");
         renderPopup();
         return;
@@ -237,6 +261,7 @@ async function generate() {
 
     const variants = parseVariants(raw);
     if (!variants.length) {
+        earlyUsage.delete(tag);
         if (raw !== "") toastr.warning("Little Helper: не удалось разобрать ответ модели");
         else toastr.warning("Little Helper: модель вернула пустой ответ. Если это отказ, Fisher Cost покажет причину.");
         renderPopup();
@@ -251,6 +276,8 @@ async function generate() {
         profile: profile || "",
         variants,
         raw,
+        tag,
+        usage: null, // filled in from Fisher Cost
     });
     renderPopup();
 }
@@ -269,6 +296,27 @@ function insertIntoInput(text) {
 function renderControls(modal) {
     modal.querySelector("#stk-helper-generate").disabled = busy;
     modal.querySelector("#stk-helper-generate").textContent = busy ? "⏳ Генерация…" : "✨ Сгенерировать";
+}
+
+/** The same usage line Fisher Cost draws under chat messages, for this generation. */
+function costLine(gen) {
+    const fc = window.fisherCost;
+    const el = document.createElement("div");
+    el.className = "stk-helper-cost";
+    if (gen.usage && typeof fc?.lineHtml === "function") {
+        el.innerHTML = fc.lineHtml(gen.usage);
+    } else if (gen.usage) {
+        // Fisher Cost disabled or not loaded: keep the stored figure visible anyway.
+        const u = gen.usage;
+        el.textContent = [u.model, `вход ${u.in}`, `выход ${u.out}`, `кэш ↓${u.cr} ↑${u.cw}`,
+            u.priced ? `$${Number(u.cost).toFixed(4)}` : "цена?"].join(" · ");
+    } else if (fc) {
+        el.classList.add("stk-helper-cost-none");
+        el.textContent = "Стоимость этой генерации не записана";
+    } else {
+        return null;
+    }
+    return el;
 }
 
 function renderResults(modal) {
@@ -318,6 +366,8 @@ function renderResults(modal) {
         }
     });
     box.appendChild(head);
+    const cost = costLine(gen);
+    if (cost) box.appendChild(cost);
 
     if (gen.direction) {
         const dir = document.createElement("div");
@@ -379,11 +429,6 @@ function openHelperPopup() {
     const countOptions = Array.from({ length: MAX_COUNT }, (_, i) => i + 1)
         .map((n) => `<option value="${n}" ${n === s.count ? "selected" : ""}>${n}</option>`)
         .join("");
-    const promptFields = PROMPT_FIELDS.map(([key, label]) => `
-        <label class="stk-helper-label">${escHtml(label)}</label>
-        <textarea class="text_pole" data-prompt="${key}" rows="${key === "base" ? 8 : 3}">${escHtml(s.prompts[key])}</textarea>`
-    ).join("");
-
     const overlay = document.createElement("div");
     overlay.id = OVERLAY_ID;
     overlay.className = "stk-modal-overlay";
@@ -393,7 +438,10 @@ function openHelperPopup() {
     modal.innerHTML = `
         <div class="stk-helper-header">
             <h4>🪄 Little Helper — ход ${escHtml(userName)}</h4>
-            <button id="stk-helper-close" class="menu_button sf-card-btn" title="Закрыть">✖</button>
+            <div class="stk-helper-header-btns">
+                <button id="stk-helper-prompt" class="menu_button sf-card-btn" title="Промпт Little Helper">📝 Промпт</button>
+                <button id="stk-helper-close" class="menu_button sf-card-btn" title="Закрыть">✖</button>
+            </div>
         </div>
         <div class="stk-helper-row">
             <label class="stk-helper-field stk-helper-count">
@@ -408,12 +456,7 @@ function openHelperPopup() {
         <textarea id="stk-helper-direction" class="text_pole" rows="3"
             placeholder="Направление (необязательно): что ${escHtml(userName)} должен сказать или сделать…">${escHtml(draftDirection)}</textarea>
         <button id="stk-helper-generate" class="menu_button stk-helper-generate">✨ Сгенерировать</button>
-        <div id="stk-helper-results" class="stk-helper-results"></div>
-        <details class="stk-helper-prompts">
-            <summary>⚙️ Промпт</summary>
-            ${promptFields}
-            <button id="stk-helper-reset" class="menu_button stk-helper-reset">↺ Вернуть промпт по умолчанию</button>
-        </details>`;
+        <div id="stk-helper-results" class="stk-helper-results"></div>`;
 
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
@@ -430,27 +473,64 @@ function openHelperPopup() {
         draftDirection = e.target.value;
     });
     modal.querySelector("#stk-helper-generate").addEventListener("click", () => generate());
-    modal.querySelectorAll("textarea[data-prompt]").forEach((ta) =>
-        ta.addEventListener("input", () => {
-            S().prompts[ta.dataset.prompt] = ta.value;
-            saveSettings();
-        })
-    );
-    modal.querySelector("#stk-helper-reset").addEventListener("click", () => {
-        if (!confirm("Вернуть все части промпта к значениям по умолчанию?")) return;
-        S().prompts = { ...DEFAULT_PROMPTS };
-        saveSettings();
-        modal.querySelectorAll("textarea[data-prompt]").forEach((ta) => {
-            ta.value = DEFAULT_PROMPTS[ta.dataset.prompt];
-        });
-        toastr.info("Промпт Little Helper сброшен");
-    });
+    modal.querySelector("#stk-helper-prompt").addEventListener("click", openPromptEditor);
     modal.querySelector("#stk-helper-close").addEventListener("click", () => overlay.remove());
     overlay.addEventListener("click", (e) => {
         if (e.target === overlay) overlay.remove();
     });
 
     renderPopup();
+}
+
+// ── UI: prompt editor (opens over the main popup) ──
+
+function openPromptEditor() {
+    document.getElementById(PROMPT_OVERLAY_ID)?.remove();
+    const s = S();
+
+    const overlay = document.createElement("div");
+    overlay.id = PROMPT_OVERLAY_ID;
+    overlay.className = "stk-modal-overlay";
+
+    const modal = document.createElement("div");
+    modal.className = "stk-modal stk-helper-modal";
+    modal.innerHTML = `
+        <h4>📝 Промпт Little Helper</h4>
+        <p class="stk-note">Склеивается из частей ниже и встаёт в самый конец контекста, после истории чата.
+            {{user}} и {{char}} Таверна заменит на имена.</p>
+        ${PROMPT_FIELDS.map(([key, label]) => `
+            <label class="stk-helper-label">${escHtml(label)}</label>
+            <textarea class="text_pole" data-prompt="${key}" rows="${key === "base" ? 12 : 4}">${escHtml(s.prompts[key])}</textarea>`
+        ).join("")}
+        <div class="stk-modal-actions">
+            <button id="stk-helper-prompt-save" class="menu_button">💾 Сохранить</button>
+            <button id="stk-helper-prompt-reset" class="menu_button">↺ По умолчанию</button>
+            <button id="stk-helper-prompt-close" class="menu_button">✖ Закрыть</button>
+        </div>`;
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    const fields = () => modal.querySelectorAll("textarea[data-prompt]");
+    modal.querySelector("#stk-helper-prompt-save").addEventListener("click", () => {
+        fields().forEach((ta) => {
+            S().prompts[ta.dataset.prompt] = ta.value;
+        });
+        saveSettings();
+        toastr.success("Промпт Little Helper сохранён");
+        overlay.remove();
+    });
+    modal.querySelector("#stk-helper-prompt-reset").addEventListener("click", () => {
+        // Only fills the fields; nothing is stored until «Сохранить».
+        fields().forEach((ta) => {
+            ta.value = DEFAULT_PROMPTS[ta.dataset.prompt];
+        });
+        toastr.info("Вставлен промпт по умолчанию — нажмите «Сохранить», чтобы применить");
+    });
+    modal.querySelector("#stk-helper-prompt-close").addEventListener("click", () => overlay.remove());
+    overlay.addEventListener("click", (e) => {
+        if (e.target === overlay) overlay.remove();
+    });
 }
 
 // ── Init ──
@@ -460,5 +540,6 @@ export function initHelper() {
     addWandMenuItem(MENU_ITEM_ID, "fa-hand-sparkles", "Little Helper", openHelperPopup);
     // History is per-chat: an open popup must follow the chat switch.
     if (eventSource && event_types) eventSource.on(event_types.CHAT_CHANGED, () => renderPopup());
+    window.addEventListener("fisher-cost:usage", onFisherUsage);
     console.log(`${TAG} Little Helper module loaded`);
 }

@@ -840,15 +840,16 @@
     white-space: pre-wrap;
     word-break: break-word;
 }
-.stk-helper-prompts { margin-top: 12px; }
-.stk-helper-prompts summary { cursor: pointer; opacity: 0.75; }
+.stk-helper-header-btns { display: flex; gap: 4px; flex-shrink: 0; }
+.stk-helper-cost { margin: 0 0 6px 0; }
+.stk-helper-cost .fc-line { margin: 0; }
+.stk-helper-cost-none { font-size: 0.8em; opacity: 0.45; font-style: italic; }
 .stk-helper-label {
     display: block;
     margin: 8px 0 3px 0;
     font-size: 0.85em;
     opacity: 0.7;
 }
-.stk-helper-reset { width: 100%; margin-top: 8px; opacity: 0.8; }
 
 @media (max-width: 768px) {
     .stk-helper-modal textarea,
