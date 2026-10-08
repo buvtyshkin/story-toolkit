@@ -11,10 +11,12 @@
 
 import { getContext, eventSource, event_types, toolkitSettings, saveSettings } from "./st.js";
 import { addWandMenuItem, escHtml } from "./utils.js";
+import { isHelperGenerating } from "./helper.js";
 
 const TAG = "[STK Guide]";
 const META_KEY = "story_guide";
 const MENU_ITEM_ID = "stk_guide_menu_item";
+const INDICATOR_ID = "stk_guide_indicator";
 
 // ── Settings (global defaults) ──
 
@@ -74,6 +76,9 @@ function clearGuide(silent = false) {
 function onPromptReady(data) {
     try {
         if (!data || data.dryRun) return; // skip token-counting dry runs
+        // Little Helper writes the player's turn; a guide aimed at the
+        // character's reply would steer it wrongly and be marked consumed.
+        if (isHelperGenerating()) return;
         const g = getGuide();
         if (!g) return;
         const chat = data.chat;
@@ -122,12 +127,24 @@ function onChatChanged() {
     updateIndicator();
 }
 
-// ── UI: wand menu indicator ──
+// ── UI: wand menu indicator + G next to the chat input ──
+
+function addInputIndicator() {
+    $(`#${INDICATOR_ID}`).remove();
+    const $g = $(`<div id="${INDICATOR_ID}" class="interactable" tabindex="0">G</div>`);
+    $g.on("click", openGuidePopup);
+    $("#leftSendForm").append($g);
+}
 
 function updateIndicator() {
+    const g = getGuide();
+    $(`#${INDICATOR_ID}`)
+        .toggleClass("stk-guide-on", !!g)
+        .attr("title", g
+            ? (g.mode === "manual" ? "Guide включён (пока не сниму)" : "Guide включён (до следующего сообщения)")
+            : "Guide выключен");
     const $item = $(`#${MENU_ITEM_ID}`);
     if (!$item.length) return;
-    const g = getGuide();
     $item.toggleClass("stk-guide-active", !!g);
     const label = g
         ? (g.mode === "manual" ? "Guide ● (ручной)" : "Guide ●")
@@ -224,6 +241,7 @@ export function initGuide() {
     S();
 
     addWandMenuItem(MENU_ITEM_ID, "fa-compass", "Guide", openGuidePopup);
+    addInputIndicator();
     updateIndicator();
 
     if (eventSource && event_types) {

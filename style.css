@@ -779,3 +779,85 @@
     margin-top: 12px;
 }
 .stk-modal-actions .menu_button { flex: 1; }
+
+/* Guide: G indicator next to the chat input — green when a guide is set */
+#leftSendForm > #stk_guide_indicator {
+    width: calc(var(--bottomFormBlockSize) * 0.7);
+    font-weight: 700;
+    font-size: 0.9em;
+    user-select: none;
+    opacity: 0.35;
+}
+#leftSendForm > #stk_guide_indicator.stk-guide-on {
+    color: #4caf50;
+    opacity: 1;
+    text-shadow: 0 0 4px rgba(76, 175, 80, 0.6);
+}
+
+/* ═══ Little Helper ═══ */
+
+.stk-helper-modal { max-width: 620px; }
+.stk-helper-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+.stk-helper-header h4 { margin: 0; }
+.stk-helper-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+.stk-helper-field {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    font-size: 0.85em;
+}
+.stk-helper-field span { opacity: 0.7; }
+.stk-helper-field select { margin: 0; }
+.stk-helper-count { flex: 0 0 90px; }
+.stk-helper-profile { flex: 1 1 180px; min-width: 0; }
+.stk-helper-generate { width: 100%; margin: 8px 0; }
+.stk-helper-results { margin-top: 4px; }
+.stk-helper-nav {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+.stk-helper-counter { font-weight: 600; min-width: 3em; text-align: center; }
+.stk-helper-info { font-size: 0.8em; opacity: 0.55; }
+.stk-helper-dir {
+    font-size: 0.8em;
+    opacity: 0.65;
+    font-style: italic;
+    margin-bottom: 6px;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.stk-helper-prompts { margin-top: 12px; }
+.stk-helper-prompts summary { cursor: pointer; opacity: 0.75; }
+.stk-helper-label {
+    display: block;
+    margin: 8px 0 3px 0;
+    font-size: 0.85em;
+    opacity: 0.7;
+}
+.stk-helper-reset { width: 100%; margin-top: 8px; opacity: 0.8; }
+
+@media (max-width: 768px) {
+    .stk-helper-modal textarea,
+    .stk-helper-modal select {
+        font-size: 16px; /* prevent iOS auto-zoom */
+    }
+    .stk-helper-modal .sf-card-btn {
+        min-height: 36px;
+        min-width: 36px;
+        font-size: 1em;
+    }
+}

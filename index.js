@@ -6,6 +6,7 @@
 //    🔥 Forge    — генерация вариантов вне чата (ex Story Forge)
 //    📚 Archive  — глобальное хранилище фрагментов (ex Story Archive)
 //    🧭 Guide    — направляемый ответ с жизненным циклом (новый)
+//    🪄 Little Helper — варианты хода за {{user}} (перевоплощение)
 //
 //  Миграция: при первом запуске данные копируются из старых
 //  расширений (plot-director, story-forge, story-archive).
@@ -17,12 +18,14 @@ import { initDirector } from "./director.js";
 import { initForge } from "./forge.js";
 import { initArchive } from "./archive.js";
 import { initGuide } from "./guide.js";
+import { initHelper } from "./helper.js";
 
 const DEFAULT_MODULES = {
     director: true,
     forge: true,
     archive: true,
     guide: true,
+    helper: true,
 };
 
 // ── Settings & migration ─────────────────────────────────────
@@ -124,6 +127,7 @@ const MODULE_LABELS = {
     forge: "🔥 Forge — генерация вариантов",
     archive: "📚 Archive — хранилище фрагментов",
     guide: "🧭 Guide — направляемый ответ",
+    helper: "🪄 Little Helper — варианты хода за вас",
 };
 
 function createMasterPanel() {
@@ -179,6 +183,7 @@ jQuery(async () => {
         ["forge", initForge],
         ["archive", initArchive],
         ["guide", initGuide],
+        ["helper", initHelper],
     ];
 
     for (const [name, init] of modules) {
