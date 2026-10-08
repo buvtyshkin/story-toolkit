@@ -53,6 +53,12 @@ export function isHelperGenerating() {
     return busy;
 }
 
+// Fisher Cost reads the global flag to book these requests under Little Helper.
+function setBusy(value) {
+    busy = value;
+    window.__stkHelperBusy = value;
+}
+
 // ── Settings (global) ──
 
 function S() {
@@ -202,7 +208,7 @@ async function generate() {
     }
     const needSwitch = profile && profile !== original;
 
-    busy = true;
+    setBusy(true);
     renderPopup();
     let raw = "";
     try {
@@ -220,7 +226,7 @@ async function generate() {
                 toastr.warning(`Little Helper: не удалось вернуть профиль «${original}» — проверьте подключение!`);
             }
         }
-        busy = false;
+        setBusy(false);
     }
 
     if (currentChatId() !== chatId) {
