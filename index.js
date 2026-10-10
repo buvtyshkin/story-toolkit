@@ -7,6 +7,7 @@
 //    📚 Archive  — глобальное хранилище фрагментов (ex Story Archive)
 //    🧭 Guide    — направляемый ответ с жизненным циклом (новый)
 //    🪄 Little Helper — варианты хода за {{user}} (перевоплощение)
+//    🔎 Story Search — поиск по словам во всех чатах
 //
 //  Миграция: при первом запуске данные копируются из старых
 //  расширений (plot-director, story-forge, story-archive).
@@ -19,6 +20,7 @@ import { initForge } from "./forge.js";
 import { initArchive } from "./archive.js";
 import { initGuide } from "./guide.js";
 import { initHelper } from "./helper.js";
+import { initSearch } from "./search.js";
 
 const DEFAULT_MODULES = {
     director: true,
@@ -26,6 +28,7 @@ const DEFAULT_MODULES = {
     archive: true,
     guide: true,
     helper: true,
+    search: true,
 };
 
 // ── Settings & migration ─────────────────────────────────────
@@ -128,6 +131,7 @@ const MODULE_LABELS = {
     archive: "📚 Archive — хранилище фрагментов",
     guide: "🧭 Guide — направляемый ответ",
     helper: "🪄 Little Helper — варианты хода за вас",
+    search: "🔎 Story Search — поиск по всем чатам",
 };
 
 function createMasterPanel() {
@@ -184,6 +188,7 @@ jQuery(async () => {
         ["archive", initArchive],
         ["guide", initGuide],
         ["helper", initHelper],
+        ["search", initSearch],
     ];
 
     for (const [name, init] of modules) {

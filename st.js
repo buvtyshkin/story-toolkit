@@ -5,9 +5,12 @@
 
 import * as ExtModule from "../../../extensions.js";
 import * as ScriptModule from "../../../../script.js";
+import * as GroupModule from "../../../group-chats.js";
 
 export const extension_settings = ExtModule.extension_settings;
 export const getContext = ExtModule.getContext;
+// Not in getContext(): needed to switch to a group before opening one of its chats.
+export const openGroupById = GroupModule.openGroupById;
 
 // These may be undefined depending on ST version — patched below.
 export let setExtensionPrompt = ExtModule.setExtensionPrompt;
