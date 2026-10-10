@@ -70,6 +70,19 @@ function rawRegex(term) {
     return new RegExp(body, 'iu');
 }
 
+/**
+ * send_date is ISO in current SillyTavern, but older chats carry the humanized
+ * form 'November 27, 2025 1:01pm', which Date.parse rejects for the missing
+ * space before am/pm. Unknown dates sort last.
+ */
+function parseDate(value) {
+    if (typeof value === 'number') return value;
+    const s = String(value || '');
+    let t = Date.parse(s);
+    if (Number.isNaN(t)) t = Date.parse(s.replace(/(\d)\s*(am|pm)$/i, '$1 $2'));
+    return Number.isNaN(t) ? 0 : t;
+}
+
 function listChatFiles(dirs) {
     const files = [];
     if (fs.existsSync(dirs.chats)) {
@@ -145,7 +158,7 @@ function search(dirs, query, limit) {
             const place = f.kind === 'char'
                 ? { kind: 'char', folder: f.folder, file: f.file, mesId }
                 : { kind: 'group', groupId: f.groupId, groupName: f.groupName, file: f.file, mesId };
-            const date = Date.parse(msg.send_date) || 0;
+            const date = parseDate(msg.send_date);
             let hit = byText.get(n);
             if (!hit) {
                 hit = { text, name: msg.name || '', isUser: !!msg.is_user, date, places: [] };

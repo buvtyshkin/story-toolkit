@@ -11,7 +11,7 @@
 // ============================================================
 
 import { getContext, openGroupById } from "./st.js";
-import { addWandMenuItem, escHtml } from "./utils.js";
+import { addWandMenuItem, escHtml, copyToClipboard } from "./utils.js";
 
 const TAG = "[STK Search]";
 const MENU_ITEM_ID = "stk_search_menu_item";
@@ -185,7 +185,13 @@ function renderHit(hit, re) {
     head.innerHTML =
         (found ? `<img class="stk-search-ava" src="/thumbnail?type=avatar&file=${encodeURIComponent(found.char.avatar)}" alt="">` : "") +
         `<b>${escHtml(placeTitle(main))}</b>` +
-        `<span class="stk-search-meta">${escHtml(hit.isUser ? `✍ ${hit.name || "вы"}` : hit.name)}${date ? " · " + escHtml(date) : ""}</span>`;
+        `<span class="stk-search-meta">${escHtml(hit.isUser ? `✍ ${hit.name || "вы"}` : hit.name)}${date ? " · " + escHtml(date) : " · дата неизвестна"}</span>`;
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "menu_button sf-card-btn stk-search-copy";
+    copyBtn.textContent = "📋 Копировать";
+    copyBtn.title = "Скопировать сообщение целиком";
+    copyBtn.addEventListener("click", () => copyToClipboard(hit.text, "Сообщение скопировано"));
+    head.appendChild(copyBtn);
     card.appendChild(head);
 
     const body = document.createElement("div");

@@ -885,6 +885,7 @@
     flex-shrink: 0;
 }
 .stk-search-meta { font-size: 0.8em; opacity: 0.6; }
+.stk-search-copy { margin-left: auto; }
 .stk-search-text mark {
     background: rgba(212, 175, 55, 0.35);
     color: inherit;
