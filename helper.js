@@ -5,7 +5,7 @@
 //  модели уходит обычный контекст чата, а в конец — наша
 //  инструкция написать ход за {{user}}. Один запрос, 1–10
 //  вариантов, разделённых тегами <variant>.
-//  Каждая генерация — «свайп»; история свайпов хранится в
+//  Каждая генерация — «свайп»; последние 5 свайпов хранятся в
 //  chat_metadata (per-chat, переживает перезагрузку).
 //  Подключение — текущее или любой Connection Profile: на время
 //  запроса переключаемся через /profile и возвращаемся обратно.
@@ -20,6 +20,7 @@ const MENU_ITEM_ID = "stk_helper_menu_item";
 const OVERLAY_ID = "stk-helper-overlay";
 const PROMPT_OVERLAY_ID = "stk-helper-prompt-overlay";
 const MAX_COUNT = 10;
+const KEEP_GENERATIONS = 5; // swipes kept per chat; older ones are dropped
 
 const DEFAULT_PROMPTS = {
     base:
@@ -110,6 +111,8 @@ function addGeneration(gen) {
         earlyUsage.delete(gen.tag);
     }
     h.generations.push(gen);
+    // Chats that piled up more before the limit existed shrink on their next generation.
+    if (h.generations.length > KEEP_GENERATIONS) h.generations.splice(0, h.generations.length - KEEP_GENERATIONS);
     h.index = h.generations.length - 1;
     saveMeta();
 }
