@@ -5,6 +5,8 @@
 //  модели уходит обычный контекст чата, а в конец — наша
 //  инструкция написать ход за {{user}}. Один запрос, 1–10
 //  вариантов, разделённых тегами <variant>.
+//  Любой вариант можно доработать («Коррекция»): тот же контекст,
+//  выбранный вариант и указание игрока — снова 1–10 вариантов.
 //  Каждая генерация — «свайп»; последние 5 свайпов хранятся в
 //  chat_metadata (per-chat, переживает перезагрузку).
 //  Подключение — текущее или любой Connection Profile: на время
@@ -34,6 +36,15 @@ const DEFAULT_PROMPTS = {
     direction:
         "Направление от игрока — обязательно воплоти его, развернув своими словами, а не пересказывая:\n" +
         "«{{direction}}»",
+    correction:
+        "Вот вариант хода, который игрок хочет доработать:\n" +
+        "«{{draft}}»\n" +
+        "\n" +
+        "Указание игрока, как его подкорректировать — выполни его точно:\n" +
+        "«{{correction}}»\n" +
+        "\n" +
+        "Перепиши ход по этому указанию. Всё, чего указание не касается, — суть хода, удачные детали, голос {{user}} — сохрани. " +
+        "Если вариантов несколько, указание выполняют все, а различаются они тем, как именно его воплощают.",
     formatOne:
         "Напиши один вариант — лучший, на какой способен: точный по голосу, живой, без проходных фраз. Оберни его в теги <variant></variant> и больше ничего не выводи.",
     formatMany:
@@ -43,6 +54,7 @@ const DEFAULT_PROMPTS = {
 const PROMPT_FIELDS = [
     ["base", "Основа"],
     ["direction", "Направление — добавляется, если поле заполнено ({{direction}})"],
+    ["correction", "Коррекция — вместо направления, когда дорабатывается вариант ({{draft}} — вариант, {{correction}} — указание)"],
     ["formatOne", "Формат: один вариант"],
     ["formatMany", "Формат: несколько вариантов ({{count}})"],
 ];
@@ -179,11 +191,19 @@ async function switchProfile(name) {
 
 // ── Prompt & parsing ──
 
-function buildPrompt(count, direction) {
+/**
+ * A correction reworks one existing variant and takes the place of the
+ * direction block: the variant already carries the direction it was made with.
+ */
+function buildPrompt(count, direction, correction = null) {
     // {{user}} / {{char}} are substituted by ST itself when it handles the quiet prompt.
     const p = S().prompts;
     const parts = [p.base];
-    if (direction) parts.push(p.direction.replaceAll("{{direction}}", direction));
+    if (correction) {
+        parts.push(p.correction.replaceAll("{{draft}}", correction.draft).replaceAll("{{correction}}", correction.instruction));
+    } else if (direction) {
+        parts.push(p.direction.replaceAll("{{direction}}", direction));
+    }
     parts.push((count === 1 ? p.formatOne : p.formatMany).replaceAll("{{count}}", String(count)));
     return parts.map((s) => s.trim()).filter(Boolean).join("\n\n");
 }
@@ -202,12 +222,13 @@ function parseVariants(raw) {
 
 // ── Generation ──
 
-async function generate() {
+/** @param {{draft: string, instruction: string}|null} correction rework one variant instead of a fresh turn */
+async function generate(correction = null) {
     if (busy) return;
     const s = S();
     const count = s.count;
     const profile = s.profile;
-    const direction = draftDirection.trim();
+    const direction = correction ? "" : draftDirection.trim();
 
     const chatId = currentChatId();
     if (!chatId) {
@@ -239,7 +260,7 @@ async function generate() {
     let raw = "";
     try {
         if (needSwitch) await switchProfile(profile);
-        raw = await generateQuietPrompt({ quietPrompt: buildPrompt(count, direction), removeReasoning: true });
+        raw = await generateQuietPrompt({ quietPrompt: buildPrompt(count, direction, correction), removeReasoning: true });
     } catch (e) {
         console.error(`${TAG} Generation error:`, e);
         toastr.error("Little Helper: ошибка генерации — " + (e?.message || e));
@@ -276,6 +297,7 @@ async function generate() {
         timestamp: Date.now(),
         count,
         direction,
+        correction: correction ? { draft: correction.draft, instruction: correction.instruction } : null,
         profile: profile || "",
         variants,
         raw,
@@ -353,19 +375,20 @@ function renderResults(modal) {
     head.innerHTML = `
         <button class="menu_button sf-card-btn" data-nav="prev" title="Предыдущая генерация" ${h.index > 0 ? "" : "disabled"}>◀</button>
         <span class="stk-helper-counter">${h.index + 1}/${total}</span>
-        <button class="menu_button sf-card-btn" data-nav="next" title="${h.index < total - 1 ? "Следующая генерация" : "Новая генерация"}">▶</button>
+        <button class="menu_button sf-card-btn" data-nav="next" title="${h.index < total - 1 ? "Следующая генерация" : gen.correction ? "Ещё раз с этой коррекцией" : "Новая генерация"}">▶</button>
         <span class="stk-helper-info">${escHtml(info)}</span>`;
     head.querySelector('[data-nav="prev"]').addEventListener("click", () => {
         setIndex(h.index - 1);
         renderPopup();
     });
     head.querySelector('[data-nav="next"]').addEventListener("click", () => {
-        // Like a swipe in ST: past the last one, a new generation starts.
+        // Like a swipe in ST: past the last one, the same request runs again —
+        // for a correction, the same variant with the same instruction.
         if (h.index < total - 1) {
             setIndex(h.index + 1);
             renderPopup();
         } else {
-            generate();
+            generate(gen.correction || null);
         }
     });
     box.appendChild(head);
@@ -377,6 +400,16 @@ function renderResults(modal) {
         dir.className = "stk-helper-dir";
         dir.textContent = `Направление: ${gen.direction}`;
         box.appendChild(dir);
+    }
+    if (gen.correction) {
+        const corr = document.createElement("details");
+        corr.className = "stk-helper-dir stk-helper-corr";
+        corr.innerHTML = `<summary>✏️ Коррекция: ${escHtml(gen.correction.instruction)}</summary>`;
+        const draft = document.createElement("div");
+        draft.className = "stk-helper-corr-draft";
+        draft.textContent = gen.correction.draft;
+        corr.appendChild(draft);
+        box.appendChild(corr);
     }
 
     for (const text of gen.variants) {
@@ -402,10 +435,52 @@ function renderResults(modal) {
         insertBtn.title = "В поле ввода";
         insertBtn.addEventListener("click", () => insertIntoInput(text));
 
-        actions.append(copyBtn, insertBtn);
+        const fixBtn = document.createElement("button");
+        fixBtn.className = "menu_button sf-card-btn";
+        fixBtn.textContent = "✏️";
+        fixBtn.title = "Коррекция: доработать этот вариант";
+        fixBtn.addEventListener("click", () => toggleCorrection(card, text));
+
+        actions.append(fixBtn, copyBtn, insertBtn);
         card.append(body, actions);
         box.appendChild(card);
     }
+}
+
+/** Inline editor under a card: how to rework this variant. */
+function toggleCorrection(card, draft) {
+    const open = card.querySelector(".stk-helper-fix");
+    if (open) {
+        open.remove();
+        return;
+    }
+    const box = document.createElement("div");
+    box.className = "stk-helper-fix";
+    box.innerHTML = `
+        <textarea class="text_pole" rows="2" placeholder="Как подкорректировать? Например: резче, короче, без извинений, пусть промолчит…"></textarea>
+        <div class="stk-helper-fix-actions">
+            <button class="menu_button stk-helper-fix-go">🔁 Переделать</button>
+            <button class="menu_button stk-helper-fix-cancel">Отмена</button>
+        </div>`;
+    const ta = box.querySelector("textarea");
+    const go = () => {
+        const instruction = ta.value.trim();
+        if (!instruction) {
+            toastr.warning("Little Helper: напишите, как подкорректировать вариант");
+            return;
+        }
+        generate({ draft, instruction });
+    };
+    box.querySelector(".stk-helper-fix-go").addEventListener("click", go);
+    ta.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            go();
+        }
+    });
+    box.querySelector(".stk-helper-fix-cancel").addEventListener("click", () => box.remove());
+    card.appendChild(box);
+    if (!window.matchMedia("(max-width: 768px)").matches) ta.focus();
 }
 
 function renderPopup() {

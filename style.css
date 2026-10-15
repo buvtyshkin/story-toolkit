@@ -914,3 +914,14 @@
     .stk-search-bar input { font-size: 16px; } /* prevent iOS auto-zoom */
     .stk-search-link { display: inline-block; padding: 4px 0; }
 }
+
+/* Little Helper: correction of a variant */
+.stk-helper-fix { margin-top: 6px; }
+.stk-helper-fix textarea { width: 100%; box-sizing: border-box; margin: 0 0 4px 0; }
+.stk-helper-fix-actions { display: flex; gap: 4px; justify-content: flex-end; }
+.stk-helper-fix-actions .menu_button { margin: 0; }
+.stk-helper-corr summary { cursor: pointer; }
+.stk-helper-corr-draft { margin: 4px 0 0 12px; font-style: normal; opacity: 0.85; }
+@media (max-width: 768px) {
+    .stk-helper-fix textarea { font-size: 16px; } /* prevent iOS auto-zoom */
+}
