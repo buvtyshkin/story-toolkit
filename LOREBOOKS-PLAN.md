@@ -33,8 +33,8 @@ are near-duplicates of each other (e.g. "Семья" exists in 38 books).
 
 ## Steps
 
-- [ ] 0. Data layer: safe load/patch/save, backups, tests.
-- [ ] 1. Clean editor: on/off, title, priority, text. New entries use the
+- [x] 0. Data layer: safe load/patch/save, backups, tests.
+- [x] 1. Clean editor: on/off, title, priority, text. New entries use the
       standard (constant, before char, 100%). Non-standard entries get a ⚠ and
       an explicit "make standard" button. Memory Books section.
 - [ ] 2. Structure: folders for books; groups for entries.

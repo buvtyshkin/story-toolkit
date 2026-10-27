@@ -925,3 +925,156 @@
 @media (max-width: 768px) {
     .stk-helper-fix textarea { font-size: 16px; } /* prevent iOS auto-zoom */
 }
+
+/* ═══ Lorebooks ═══ */
+
+/* Desktop: two panes that scroll on their own, the window itself stays put. */
+.stk-lore-modal {
+    max-width: 1100px;
+    height: min(920px, calc(100dvh - 24px));
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.stk-lore-header { flex-shrink: 0; }
+.stk-lore-status { margin-left: auto; font-size: 0.8em; opacity: 0.6; white-space: nowrap; }
+.stk-lore-panes {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    gap: 12px;
+}
+.stk-lore-books, .stk-lore-entries { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.stk-lore-books { display: flex; flex-direction: column; gap: 6px; padding-right: 4px; }
+.stk-lore-filter { margin: 0; flex-shrink: 0; }
+.stk-lore-books-list { display: flex; flex-direction: column; gap: 2px; }
+.stk-lore-book {
+    text-align: left;
+    background: transparent;
+    color: inherit;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 6px 8px;
+    font: inherit;
+    font-size: 0.92em;
+    cursor: pointer;
+    word-break: break-word;
+}
+.stk-lore-book:hover { background: rgba(128, 128, 128, 0.12); }
+.stk-lore-book.active {
+    border-color: var(--interactable-outline-color, var(--SmartThemeQuoteColor, #e18a24));
+    background: rgba(128, 128, 128, 0.14);
+}
+
+.stk-lore-entries { padding-right: 4px; }
+.stk-lore-bookhead { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.stk-lore-bookname { margin: 0 !important; word-break: break-word; }
+.stk-lore-back { display: none; flex-shrink: 0; }
+.stk-lore-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.stk-lore-toolbar .menu_button { margin: 0; white-space: nowrap; }
+.stk-lore-sort { width: auto; margin: 0; }
+.stk-lore-stats { font-size: 0.85em; opacity: 0.65; }
+.stk-lore-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+
+.stk-lore-entry {
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    border-radius: 8px;
+    background: var(--SmartThemeBlurTintColor, rgba(0, 0, 0, 0.2));
+}
+.stk-lore-entry.off .stk-lore-main { opacity: 0.45; }
+.stk-lore-entry.open { border-color: var(--interactable-outline-color, var(--SmartThemeQuoteColor, #e18a24)); }
+.stk-lore-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 10px;
+    min-height: 40px;
+    cursor: pointer;
+}
+.stk-lore-on { width: 18px; height: 18px; margin: 0; flex-shrink: 0; cursor: pointer; }
+.stk-lore-main { flex: 1; min-width: 0; }
+.stk-lore-title { font-weight: 600; word-break: break-word; }
+.stk-lore-preview {
+    font-size: 0.82em;
+    opacity: 0.6;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.stk-lore-warn { color: var(--warning, #e5a50a); cursor: help; flex-shrink: 0; }
+.stk-lore-prio {
+    font-size: 0.8em;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.7;
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    border-radius: 10px;
+    padding: 1px 7px;
+    flex-shrink: 0;
+}
+
+.stk-lore-edit { padding: 0 10px 10px; display: flex; flex-direction: column; gap: 8px; }
+.stk-lore-fields { display: flex; gap: 8px; }
+.stk-lore-field { display: flex; flex-direction: column; gap: 3px; font-size: 0.85em; }
+.stk-lore-field > span { opacity: 0.7; }
+.stk-lore-field input, .stk-lore-field textarea { margin: 0; font-size: 1.1em; }
+.stk-lore-field-title { flex: 1; min-width: 0; }
+.stk-lore-field-prio { flex: 0 0 96px; }
+.stk-lore-text { resize: vertical; min-height: 6em; line-height: 1.5; overflow: hidden; }
+.stk-lore-devs {
+    font-size: 0.85em;
+    border-left: 3px solid var(--warning, #e5a50a);
+    padding: 4px 8px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+.stk-lore-devs .menu_button { margin: 0; }
+.stk-lore-edit-foot { display: flex; align-items: center; gap: 6px; }
+.stk-lore-edit-foot .menu_button { margin: 0; }
+.stk-lore-chars { margin-right: auto; font-size: 0.8em; opacity: 0.55; }
+
+.stk-lore-memories { margin-top: 14px; }
+.stk-lore-memories > summary, .stk-lore-memory > summary { cursor: pointer; padding: 6px 0; }
+.stk-lore-memories > summary { opacity: 0.75; }
+.stk-lore-memory { margin-left: 14px; font-size: 0.92em; }
+.stk-lore-memory .sf-card-text { opacity: 0.85; margin: 2px 0 8px 0; }
+
+/* Phone: one pane at a time, the page itself scrolls (so the on-screen
+   keyboard never hides the text being typed), header stays on top. */
+@media (max-width: 768px) {
+    #stk-lore-overlay { padding: 0; }
+    .stk-lore-modal {
+        height: auto;
+        min-height: 100%;
+        overflow: visible;
+        border-radius: 0;
+        border: none;
+        margin: 0;
+        padding: 0 12px 24px;
+    }
+    .stk-lore-header {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        background: var(--SmartThemeBlurTintColor, #1a1a1a);
+        padding: 10px 0;
+        margin-bottom: 4px !important;
+    }
+    .stk-lore-panes { display: block; }
+    .stk-lore-books, .stk-lore-entries { overflow: visible; padding-right: 0; }
+    .stk-lore-modal.has-book .stk-lore-books { display: none; }
+    .stk-lore-modal:not(.has-book) .stk-lore-entries { display: none; }
+    .stk-lore-back { display: inline-flex; }
+    .stk-lore-book { padding: 11px 10px; font-size: 1em; }
+    .stk-lore-row { min-height: 52px; padding: 6px 10px; }
+    .stk-lore-on { width: 24px; height: 24px; }
+    .stk-lore-fields { flex-wrap: wrap; }
+    .stk-lore-field-title { flex-basis: 100%; }
+    .stk-lore-modal input, .stk-lore-modal textarea, .stk-lore-modal select { font-size: 16px; } /* prevent iOS auto-zoom */
+    .stk-lore-modal .sf-card-btn, .stk-lore-toolbar .menu_button { min-height: 40px; min-width: 40px; font-size: 1em; }
+    .stk-lore-toolbar .menu_button { flex: 1 1 100%; }
+    .stk-lore-sort { flex: 1; min-height: 40px; }
+    .stk-lore-modal input.text_pole { min-height: 40px; }
+}

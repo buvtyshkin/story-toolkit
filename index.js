@@ -8,6 +8,7 @@
 //    🧭 Guide    — направляемый ответ с жизненным циклом (новый)
 //    🪄 Little Helper — варианты хода за {{user}} (перевоплощение)
 //    🔎 Story Search — поиск по словам во всех чатах
+//    📖 Лорбуки — упрощённый редактор лорбуков
 //
 //  Миграция: при первом запуске данные копируются из старых
 //  расширений (plot-director, story-forge, story-archive).
@@ -21,6 +22,7 @@ import { initArchive } from "./archive.js";
 import { initGuide } from "./guide.js";
 import { initHelper } from "./helper.js";
 import { initSearch } from "./search.js";
+import { initLore } from "./lore.js";
 
 const DEFAULT_MODULES = {
     director: true,
@@ -29,6 +31,7 @@ const DEFAULT_MODULES = {
     guide: true,
     helper: true,
     search: true,
+    lore: true,
 };
 
 // ── Settings & migration ─────────────────────────────────────
@@ -132,6 +135,7 @@ const MODULE_LABELS = {
     guide: "🧭 Guide — направляемый ответ",
     helper: "🪄 Little Helper — варианты хода за вас",
     search: "🔎 Story Search — поиск по всем чатам",
+    lore: "📖 Лорбуки — упрощённый редактор",
 };
 
 function createMasterPanel() {
@@ -189,6 +193,7 @@ jQuery(async () => {
         ["guide", initGuide],
         ["helper", initHelper],
         ["search", initSearch],
+        ["lore", initLore],
     ];
 
     for (const [name, init] of modules) {
