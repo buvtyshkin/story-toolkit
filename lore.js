@@ -331,8 +331,13 @@ function render() {
 }
 
 function autosize(ta) {
+    // Collapsing the textarea for a moment shortens the page, and the browser
+    // clamps the scroll position: keep it, or typing in a long text jumps up.
+    const scrollers = [ta.closest(".stk-lore-entries"), document.getElementById(OVERLAY_ID)].filter(Boolean);
+    const tops = scrollers.map((s) => s.scrollTop);
     ta.style.height = "auto";
     ta.style.height = ta.scrollHeight + 2 + "px";
+    scrollers.forEach((s, i) => { s.scrollTop = tops[i]; });
 }
 
 function entryUid(el) {

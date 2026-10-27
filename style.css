@@ -1065,7 +1065,9 @@
 .stk-lore-field input, .stk-lore-field textarea { margin: 0; font-size: 1.1em; }
 .stk-lore-field-title { flex: 1; min-width: 0; }
 .stk-lore-field-prio { flex: 0 0 96px; }
-.stk-lore-text { resize: vertical; min-height: 6em; line-height: 1.5; overflow: hidden; }
+/* SillyTavern caps every textarea at 90dvh; ours grows to the whole text and
+   the pane scrolls instead. overflow: auto is only a safety net. */
+.stk-lore-text { resize: vertical; min-height: 6em; max-height: none; line-height: 1.5; overflow-y: auto; }
 .stk-lore-devs {
     font-size: 0.85em;
     border-left: 3px solid var(--warning, #e5a50a);
