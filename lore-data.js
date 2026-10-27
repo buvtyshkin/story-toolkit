@@ -87,6 +87,107 @@ export function sortEntries(entries) {
         !!a.disable - !!b.disable || (a.order ?? 100) - (b.order ?? 100) || byTitle(a, b) || a.uid - b.uid);
 }
 
+// ── Folders (for lorebooks) ──
+//
+// folders: { [id]: { name, parent } } (parent: id or null), bookFolder: { [book]: id }.
+// Both live in extension settings; the lorebook files are not touched.
+
+/** Child folders of `parent` (null = top level), alphabetical. */
+export function childFolders(folders, parent) {
+    return Object.entries(folders || {})
+        .filter(([, f]) => (f.parent ?? null) === parent)
+        .map(([id, f]) => ({ id, name: f.name }))
+        .sort((a, b) => a.name.localeCompare(b.name, "ru", { sensitivity: "base" }));
+}
+
+/** The folder a book sits in, or null if none (or its folder is gone). */
+export function folderOf(folders, bookFolder, book) {
+    const id = bookFolder?.[book];
+    return id && folders?.[id] ? id : null;
+}
+
+/** Folder names from the top down to `id`. */
+export function folderPath(folders, id) {
+    const path = [];
+    const seen = new Set();
+    while (id && folders?.[id] && !seen.has(id)) {
+        seen.add(id);
+        path.unshift(folders[id].name);
+        id = folders[id].parent;
+    }
+    return path;
+}
+
+/** Every folder as [{ id, name, depth }], in tree order: for "move to folder" lists. */
+export function flatFolders(folders, parent = null, depth = 0) {
+    return childFolders(folders, parent).flatMap((f) => [{ ...f, depth }, ...flatFolders(folders, f.id, depth + 1)]);
+}
+
+/**
+ * Remove a folder: its subfolders and books move up to its parent.
+ * Mutates `folders` and `bookFolder`.
+ */
+export function deleteFolder(folders, bookFolder, id) {
+    const parent = folders[id]?.parent ?? null;
+    for (const f of Object.values(folders)) if (f.parent === id) f.parent = parent;
+    for (const [book, fid] of Object.entries(bookFolder)) {
+        if (fid !== id) continue;
+        if (parent) bookFolder[book] = parent;
+        else delete bookFolder[book];
+    }
+    delete folders[id];
+}
+
+/** Number of books in a folder and all its subfolders. */
+export function countBooks(folders, bookFolder, books, id) {
+    let n = 0;
+    for (const b of books) {
+        let f = folderOf(folders, bookFolder, b);
+        const seen = new Set();
+        while (f && !seen.has(f)) {
+            if (f === id) { n++; break; }
+            seen.add(f);
+            f = folders[f].parent;
+        }
+    }
+    return n;
+}
+
+// ── Groups (for entries) ──
+//
+// One ordered list for all books: groups = [{ id, name }]. An entry keeps the
+// id in its own field, so the group travels with copies of the entry.
+
+export const GROUP_FIELD = "stk_group";
+
+/**
+ * Entries split by group, in the order of `groups`, then the ungrouped ones
+ * (also those whose group was deleted). Empty groups are left out.
+ * Returns [{ group: {id, name} | null, entries: sorted }].
+ */
+export function groupEntries(entries, groups) {
+    const known = new Set((groups || []).map((g) => g.id));
+    const by = new Map();
+    for (const e of entries) {
+        const id = known.has(e[GROUP_FIELD]) ? e[GROUP_FIELD] : null;
+        if (!by.has(id)) by.set(id, []);
+        by.get(id).push(e);
+    }
+    const out = [];
+    for (const g of groups || []) if (by.has(g.id)) out.push({ group: g, entries: sortEntries(by.get(g.id)) });
+    if (by.has(null)) out.push({ group: null, entries: sortEntries(by.get(null)) });
+    return out;
+}
+
+/** Move a group one place up (dir -1) or down (+1). Mutates and returns `groups`. */
+export function moveGroup(groups, id, dir) {
+    const i = groups.findIndex((g) => g.id === id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= groups.length) return groups;
+    [groups[i], groups[j]] = [groups[j], groups[i]];
+    return groups;
+}
+
 /** First non-empty line of the text, shortened. */
 export function preview(content, max = 110) {
     const line = String(content || "").split(/\r?\n/).find((l) => l.trim()) || "";

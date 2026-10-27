@@ -9,13 +9,19 @@
 //  Безопасность (Memory Books и другие расширения пишут в те же
 //  файлы): каждое сохранение перечитывает лорбук и вносит только
 //  изменённые поля, чужие поля не трогаются. Воспоминания Memory
-//  Books показаны отдельно и не редактируются.
+//  Books показаны отдельным разделом.
+//
+//  Порядок: лорбуки разложены по папкам (хранятся в настройках
+//  расширения), записи — по группам (общий список групп; id группы
+//  лежит в самой записи, поле stk_group).
 // ============================================================
 
 import { getContext, getPopupClass, toolkitSettings, saveSettings, eventSource, event_types, worldInfo } from "./st.js";
-import { addWandMenuItem, escHtml } from "./utils.js";
+import { addWandMenuItem, escHtml, uid as newId } from "./utils.js";
 import {
     STANDARD, isMemoryEntry, deviations, applyPatch, newEntryFields, splitEntries, sortEntries, preview,
+    childFolders, folderOf, folderPath, flatFolders, deleteFolder, countBooks,
+    GROUP_FIELD, groupEntries, moveGroup,
 } from "./lore-data.js";
 
 const TAG = "[STK Lore]";
@@ -36,10 +42,36 @@ const pending = new Map();
 let saveChain = Promise.resolve();
 let ownSave = false;
 
+const LORE_DEFAULTS = {
+    lastBook: null,
+    memoriesOpen: true,
+    folders: {},          // id -> { name, parent }
+    bookFolder: {},       // book name -> folder id
+    foldersCollapsed: {}, // folder id ("" = no folder) -> true
+    groups: [],           // [{ id, name }], in display order
+    groupsCollapsed: {},  // group id ("" = no group) -> true
+};
+
 function settings() {
     const t = toolkitSettings();
-    if (!t.lore) t.lore = { lastBook: null, memoriesOpen: true };
+    if (!t.lore) t.lore = {};
+    for (const [k, v] of Object.entries(LORE_DEFAULTS)) {
+        if (t.lore[k] === undefined) t.lore[k] = structuredClone(v);
+    }
     return t.lore;
+}
+
+/** Ask for a name with SillyTavern's popup; null if cancelled or empty. */
+async function askName(title, value = "") {
+    const popup = getPopupClass();
+    const answer = popup ? await popup.Popup.show.input(title, "", value) : window.prompt(title, value);
+    const name = typeof answer === "string" ? answer.trim() : "";
+    return name || null;
+}
+
+async function askConfirm(title, html) {
+    const popup = getPopupClass();
+    return popup ? !!(await popup.Popup.show.confirm(title, html)) : window.confirm(title);
 }
 
 /** escHtml leaves quotes alone, which breaks attribute values. */
@@ -190,10 +222,8 @@ async function deleteEntry(uid) {
     const memory = isMemoryEntry(entry)
         ? " Это воспоминание Memory Books."
         : "";
-    const popup = getPopupClass();
-    const yes = popup
-        ? await popup.Popup.show.confirm("Удалить запись?", `«${escHtml(label)}» будет удалена из лорбука «${escHtml(state.book)}». Это необратимо.${memory}`)
-        : window.confirm(`Удалить «${label}»? Это необратимо.${memory}`);
+    const yes = await askConfirm("Удалить запись?",
+        `«${escHtml(label)}» будет удалена из лорбука «${escHtml(state.book)}». Это необратимо.${memory}`);
     if (!yes) return;
     clearTimeout(pending.get(uid)?.timer);
     pending.delete(uid);
@@ -207,6 +237,81 @@ async function deleteEntry(uid) {
         state.openUid = null;
         renderEntries();
     }
+}
+
+/** Re-render the entries, keep the open one in view (it may have moved to another group). */
+async function rerenderKeepOpen() {
+    await flushAll();
+    renderEntries();
+    if (state.openUid !== null) {
+        modal()?.querySelector(`.stk-lore-entry[data-uid="${state.openUid}"]`)?.scrollIntoView({ block: "nearest" });
+    }
+}
+
+async function setEntryGroup(uid, select) {
+    let id = select.value;
+    if (id === "__new") {
+        const name = await askName("Новая группа");
+        if (!name) {
+            const e = state.data.entries[uid];
+            select.value = settings().groups.some((g) => g.id === e?.[GROUP_FIELD]) ? e[GROUP_FIELD] : "";
+            return;
+        }
+        id = newId();
+        settings().groups.push({ id, name });
+        saveSettings();
+    }
+    // No group = no field at all (undefined is dropped when the book is saved).
+    await savePatch(uid, { [GROUP_FIELD]: id || undefined });
+    await rerenderKeepOpen();
+}
+
+function groupsPanel() {
+    closeMenu();
+    const s = settings();
+    const panel = document.createElement("div");
+    panel.className = "stk-lore-menu stk-lore-groups-panel";
+    const draw = () => {
+        panel.innerHTML = `
+            <div class="stk-lore-menu-header">Группы записей — общие для всех лорбуков</div>
+            ${s.groups.length ? s.groups.map((g, i) => `
+                <div class="stk-lore-grow" data-gid="${escAttr(g.id)}">
+                    <span class="stk-lore-grow-name">${escHtml(g.name)}</span>
+                    <button class="menu_button sf-card-btn" data-gact="up" title="Выше" ${i ? "" : "disabled"}>↑</button>
+                    <button class="menu_button sf-card-btn" data-gact="down" title="Ниже" ${i < s.groups.length - 1 ? "" : "disabled"}>↓</button>
+                    <button class="menu_button sf-card-btn" data-gact="rename" title="Переименовать">✎</button>
+                    <button class="menu_button sf-card-btn" data-gact="delete" title="Удалить">🗑</button>
+                </div>`).join("") : `<p class="stk-note">Групп пока нет.</p>`}
+            <div class="stk-lore-gfoot">
+                <button class="menu_button" data-gact="add">＋ Группа</button>
+                <button class="menu_button" data-gact="done">Готово</button>
+            </div>`;
+    };
+    draw();
+    panel.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const act = e.target.closest("[data-gact]")?.dataset.gact;
+        if (!act) return;
+        const g = s.groups.find((x) => x.id === e.target.closest("[data-gid]")?.dataset.gid);
+        if (act === "done") return panel.remove();
+        if (act === "add") {
+            const name = await askName("Новая группа");
+            if (name) s.groups.push({ id: newId(), name });
+        } else if ((act === "up" || act === "down") && g) {
+            moveGroup(s.groups, g.id, act === "up" ? -1 : 1);
+        } else if (act === "rename" && g) {
+            const name = await askName("Переименовать группу", g.name);
+            if (name) g.name = name;
+        } else if (act === "delete" && g) {
+            const ok = await askConfirm("Удалить группу?",
+                `Группа «${escHtml(g.name)}» исчезнет из списка. Записи не удаляются — они окажутся в «Без группы».`);
+            if (ok) s.groups.splice(s.groups.indexOf(g), 1);
+        }
+        saveSettings();
+        draw();
+        await rerenderKeepOpen();
+    });
+    modal().appendChild(panel);
 }
 
 async function makeStandard(uid) {
@@ -226,14 +331,171 @@ function bookNames() {
     return [...names].sort((a, b) => a.localeCompare(b, "ru", { sensitivity: "base" }));
 }
 
+function bookRowHtml(name, showPath = false) {
+    const s = settings();
+    const path = showPath ? folderPath(s.folders, folderOf(s.folders, s.bookFolder, name)) : [];
+    return `
+        <div class="stk-lore-bookrow" draggable="true" data-drag-book="${escAttr(name)}">
+            <button class="stk-lore-book${name === state.book ? " active" : ""}" data-book="${escAttr(name)}">${escHtml(name)}${
+                path.length ? `<small class="stk-lore-path">${escHtml(path.join(" › "))}</small>` : ""}</button>
+            <button class="stk-lore-more" data-menu="book" data-id="${escAttr(name)}" title="В папку…">⋯</button>
+        </div>`;
+}
+
+/** A folder with its subfolders and books; id "" is the "no folder" bucket. */
+function folderHtml(id, name, books, inner) {
+    const s = settings();
+    const collapsed = !!s.foldersCollapsed[id];
+    return `
+        <div class="stk-lore-folder">
+            <div class="stk-lore-folder-head" data-drop-folder="${escAttr(id)}">
+                <button class="stk-lore-folder-toggle" data-act="toggle-folder" data-id="${escAttr(id)}">
+                    <span class="stk-lore-caret">${collapsed ? "▸" : "▾"}</span>
+                    <span class="stk-lore-folder-name">${id ? "📁" : "📄"} ${escHtml(name)}</span>
+                    <span class="stk-lore-count">${books}</span>
+                </button>
+                ${id ? `<button class="stk-lore-more" data-menu="folder" data-id="${escAttr(id)}" title="Папка">⋯</button>` : ""}
+            </div>
+            ${collapsed ? "" : `<div class="stk-lore-folder-body">${inner}</div>`}
+        </div>`;
+}
+
 function renderBooks() {
     const list = modal()?.querySelector(".stk-lore-books-list");
     if (!list) return;
+    const s = settings();
+    const names = bookNames();
     const f = state.filter.trim().toLowerCase();
-    const names = bookNames().filter((n) => !f || n.toLowerCase().includes(f));
-    list.innerHTML = names.length
-        ? names.map((n) => `<button class="stk-lore-book${n === state.book ? " active" : ""}" data-book="${escAttr(n)}">${escHtml(n)}</button>`).join("")
-        : `<p class="stk-note">Ничего не найдено</p>`;
+
+    // Searching: a flat list of matches, each with the folder it lives in.
+    if (f) {
+        const hits = names.filter((n) => n.toLowerCase().includes(f));
+        list.innerHTML = hits.length ? hits.map((n) => bookRowHtml(n, true)).join("") : `<p class="stk-note">Ничего не найдено</p>`;
+        return;
+    }
+    // No folders yet: the plain list.
+    if (!Object.keys(s.folders).length) {
+        list.innerHTML = names.map((n) => bookRowHtml(n)).join("");
+        return;
+    }
+    const booksIn = (id) => names.filter((n) => folderOf(s.folders, s.bookFolder, n) === id);
+    const tree = (parent) => childFolders(s.folders, parent).map((fd) =>
+        folderHtml(fd.id, fd.name, countBooks(s.folders, s.bookFolder, names, fd.id),
+            tree(fd.id) + booksIn(fd.id).map((n) => bookRowHtml(n)).join(""))).join("");
+    const loose = booksIn(null);
+    list.innerHTML = tree(null) +
+        (loose.length ? folderHtml("", "Без папки", loose.length, loose.map((n) => bookRowHtml(n)).join("")) : "");
+}
+
+// ── Menus (folder / book actions) ──
+
+function closeMenu() {
+    modal()?.querySelector(".stk-lore-menu")?.remove();
+}
+
+/**
+ * A small menu next to `anchor` (a bottom sheet on phones).
+ * items: [{ label, run, current, depth, header }]
+ */
+function openMenu(anchor, items, extraClass = "") {
+    closeMenu();
+    const m = modal();
+    const menu = document.createElement("div");
+    menu.className = `stk-lore-menu ${extraClass}`;
+    items.forEach((it, i) => {
+        if (it.header) {
+            menu.insertAdjacentHTML("beforeend", `<div class="stk-lore-menu-header">${escHtml(it.header)}</div>`);
+            return;
+        }
+        const b = document.createElement("button");
+        b.className = "stk-lore-menu-item" + (it.current ? " current" : "") + (it.danger ? " danger" : "");
+        b.style.paddingLeft = `${12 + (it.depth || 0) * 16}px`;
+        b.textContent = (it.current ? "✓ " : "") + it.label;
+        b.dataset.menuItem = i;
+        menu.appendChild(b);
+    });
+    menu.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const item = items[e.target.closest("[data-menu-item]")?.dataset.menuItem];
+        if (!item?.run) return;
+        closeMenu();
+        await item.run();
+    });
+    m.appendChild(menu);
+    if (!isPhone() && anchor) {
+        const a = anchor.getBoundingClientRect();
+        const box = m.getBoundingClientRect();
+        const left = Math.min(a.left - box.left, box.width - menu.offsetWidth - 8);
+        const top = Math.min(a.bottom - box.top + 2, box.height - menu.offsetHeight - 8);
+        menu.style.left = `${Math.max(8, left)}px`;
+        menu.style.top = `${Math.max(8, top)}px`;
+    }
+}
+
+function saveAndRenderBooks() {
+    saveSettings();
+    renderBooks();
+}
+
+async function newFolder(parent = null) {
+    const name = await askName(parent ? "Новая подпапка" : "Новая папка");
+    if (!name) return;
+    settings().folders[newId()] = { name, parent };
+    if (parent) delete settings().foldersCollapsed[parent];
+    saveAndRenderBooks();
+}
+
+function folderMenu(anchor, id) {
+    const s = settings();
+    const folder = s.folders[id];
+    if (!folder) return;
+    openMenu(anchor, [
+        { header: folder.name },
+        { label: "＋ Подпапка", run: () => newFolder(id) },
+        { label: "✎ Переименовать", run: async () => {
+            const name = await askName("Переименовать папку", folder.name);
+            if (name) { folder.name = name; saveAndRenderBooks(); }
+        } },
+        { label: "🗑 Удалить папку", danger: true, run: async () => {
+            const ok = await askConfirm("Удалить папку?",
+                `Папка «${escHtml(folder.name)}» исчезнет. Лорбуки и подпапки из неё переедут на уровень выше — сами лорбуки не удаляются.`);
+            if (ok) { deleteFolder(s.folders, s.bookFolder, id); saveAndRenderBooks(); }
+        } },
+    ]);
+}
+
+function moveBook(book, folderId) {
+    const s = settings();
+    if (folderId) s.bookFolder[book] = folderId;
+    else delete s.bookFolder[book];
+    saveAndRenderBooks();
+}
+
+function bookMenu(anchor, book) {
+    const s = settings();
+    const folders = flatFolders(s.folders);
+    if (!folders.length) {
+        toastr.info("Сначала создайте папку кнопкой «＋ Папка».", "Лорбуки");
+        return;
+    }
+    const current = folderOf(s.folders, s.bookFolder, book);
+    openMenu(anchor, [
+        { header: `«${book}» — в папку:` },
+        ...folders.map((f) => ({ label: f.name, depth: f.depth, current: f.id === current, run: () => moveBook(book, f.id) })),
+        { label: "Без папки", current: !current, run: () => moveBook(book, null) },
+    ]);
+}
+
+function groupSelectHtml(e) {
+    const groups = settings().groups;
+    const current = groups.some((g) => g.id === e[GROUP_FIELD]) ? e[GROUP_FIELD] : "";
+    return `
+        <label class="stk-lore-field stk-lore-field-group"><span>Группа</span>
+            <select class="text_pole stk-lore-group-select">
+                <option value="" ${current ? "" : "selected"}>— без группы —</option>
+                ${groups.map((g) => `<option value="${escAttr(g.id)}" ${g.id === current ? "selected" : ""}>${escHtml(g.name)}</option>`).join("")}
+                <option value="__new">＋ новая группа…</option>
+            </select></label>`;
 }
 
 /** Memories are edited like any entry; their settings belong to Memory Books, so no ⚠ for them. */
@@ -259,6 +521,7 @@ function entryHtml(e, memory = false) {
             <div class="stk-lore-fields">
                 <label class="stk-lore-field stk-lore-field-title"><span>Название</span>
                     <input class="text_pole stk-lore-title-input" value="${escAttr(title)}"></label>
+                ${memory ? "" : groupSelectHtml(e)}
                 <label class="stk-lore-field stk-lore-field-prio"><span>Приоритет</span>
                     <input class="text_pole stk-lore-prio-input" type="number" inputmode="numeric" value="${e.order ?? 100}"></label>
             </div>
@@ -296,10 +559,11 @@ function renderEntries() {
         </div>
         <div class="stk-lore-toolbar">
             <button class="menu_button" data-act="add">＋ Новая запись</button>
+            <button class="menu_button" data-act="groups">🗂 Группы</button>
             <span class="stk-lore-stats">${regular.length} записей${off ? ` · выкл. ${off}` : ""}${odd ? ` · ⚠ ${odd}` : ""}</span>
         </div>
         <p class="stk-note">Сверху включённые, ниже выключенные; внутри — по приоритету: меньшее число выше, как в промпте.</p>
-        ${listHtml(regular, false) || `<p class="stk-note">Записей нет.</p>`}
+        ${(settings().groups.length ? groupedHtml(regular) : listHtml(regular, false)) || `<p class="stk-note">Записей нет.</p>`}
         ${memories.length ? `
         <details class="stk-lore-memories" ${settings().memoriesOpen === false ? "" : "open"}>
             <summary>🧠 Воспоминания Memory Books (${memories.length}${memOff ? ` · выкл. ${memOff}` : ""})</summary>
@@ -311,6 +575,24 @@ function renderEntries() {
         saveSettings();
     });
     box.querySelectorAll(".stk-lore-text").forEach(autosize);
+}
+
+/** Entries under collapsible group headers; inside a group the styling tells on from off. */
+function groupedHtml(entries) {
+    const collapsed = settings().groupsCollapsed;
+    return groupEntries(entries, settings().groups).map(({ group, entries: list }) => {
+        const id = group?.id ?? "";
+        const off = list.filter((e) => e.disable).length;
+        return `
+        <div class="stk-lore-group">
+            <button class="stk-lore-group-head" data-act="toggle-group" data-id="${escAttr(id)}">
+                <span class="stk-lore-caret">${collapsed[id] ? "▸" : "▾"}</span>
+                <span class="stk-lore-group-name">${escHtml(group?.name ?? "Без группы")}</span>
+                <span class="stk-lore-count">${list.length}${off ? ` · выкл. ${off}` : ""}</span>
+            </button>
+            ${collapsed[id] ? "" : `<div class="stk-lore-list">${list.map((e) => entryHtml(e)).join("")}</div>`}
+        </div>`;
+    }).join("");
 }
 
 /** Sorted entries, with a divider before the disabled ones. */
@@ -355,13 +637,37 @@ async function toggleOpen(uid) {
 
 function bindModal(m) {
     m.addEventListener("click", async (e) => {
+        // An open menu swallows the first click outside it.
+        if (m.querySelector(".stk-lore-menu")) {
+            closeMenu();
+            return;
+        }
+        const more = e.target.closest("[data-menu]");
+        if (more) return more.dataset.menu === "folder" ? folderMenu(more, more.dataset.id) : bookMenu(more, more.dataset.id);
         const book = e.target.closest(".stk-lore-book");
         if (book) return openBook(book.dataset.book);
         if (e.target.closest(".stk-lore-close")) return closeModal();
         if (e.target.classList.contains("stk-lore-on")) return; // handled by change
 
-        const act = e.target.closest("[data-act]")?.dataset.act;
+        const actEl = e.target.closest("[data-act]");
+        const act = actEl?.dataset.act;
         const uid = entryUid(e.target);
+        if (act === "toggle-folder") {
+            const c = settings().foldersCollapsed;
+            if (c[actEl.dataset.id]) delete c[actEl.dataset.id];
+            else c[actEl.dataset.id] = true;
+            return saveAndRenderBooks();
+        }
+        if (act === "toggle-group") {
+            const c = settings().groupsCollapsed;
+            if (c[actEl.dataset.id]) delete c[actEl.dataset.id];
+            else c[actEl.dataset.id] = true;
+            saveSettings();
+            await flushAll();
+            return renderEntries();
+        }
+        if (act === "new-folder") return newFolder();
+        if (act === "groups") return groupsPanel();
         if (act === "back") {
             await flushAll();
             state.book = null;
@@ -388,7 +694,41 @@ function bindModal(m) {
             const label = e.target.closest(".stk-lore-entry").querySelector(".stk-lore-prio");
             if (label) label.textContent = order;
             savePatch(uid, { order }); // re-sorted when the entry is collapsed
+        } else if (e.target.classList.contains("stk-lore-group-select")) {
+            setEntryGroup(uid, e.target);
         }
+    });
+
+    // Desktop: drag a lorebook onto a folder. (Touch screens use the ⋯ menu.)
+    let dragBook = null;
+    const dropHead = (e) => (dragBook === null ? null : e.target.closest?.("[data-drop-folder]"));
+    m.addEventListener("dragstart", (e) => {
+        const row = e.target.closest?.("[data-drag-book]");
+        if (!row) return;
+        dragBook = row.dataset.dragBook;
+        e.dataTransfer.setData("text/plain", dragBook);
+        e.dataTransfer.effectAllowed = "move";
+    });
+    m.addEventListener("dragover", (e) => {
+        const head = dropHead(e);
+        if (!head) return;
+        e.preventDefault();
+        head.classList.add("drop");
+    });
+    m.addEventListener("dragleave", (e) => {
+        const head = dropHead(e);
+        if (head && !head.contains(e.relatedTarget)) head.classList.remove("drop");
+    });
+    m.addEventListener("drop", (e) => {
+        const head = dropHead(e);
+        if (!head) return;
+        e.preventDefault();
+        moveBook(dragBook, head.dataset.dropFolder || null);
+        dragBook = null;
+    });
+    m.addEventListener("dragend", () => {
+        dragBook = null;
+        m.querySelectorAll(".drop").forEach((el) => el.classList.remove("drop"));
     });
 
     m.addEventListener("input", (e) => {
@@ -440,7 +780,10 @@ function openLorePopup() {
         </div>
         <div class="stk-lore-panes">
             <div class="stk-lore-books">
-                <input class="text_pole stk-lore-filter" type="search" autocomplete="off" placeholder="Найти лорбук…" value="${escAttr(state.filter)}">
+                <div class="stk-lore-books-bar">
+                    <input class="text_pole stk-lore-filter" type="search" autocomplete="off" placeholder="Найти лорбук…" value="${escAttr(state.filter)}">
+                    <button class="menu_button sf-card-btn" data-act="new-folder" title="Новая папка">＋ Папка</button>
+                </div>
                 <div class="stk-lore-books-list"></div>
             </div>
             <div class="stk-lore-entries"></div>
@@ -448,7 +791,9 @@ function openLorePopup() {
     </div>`;
     document.body.appendChild(overlay);
     overlay.addEventListener("click", (e) => {
-        if (e.target === overlay) closeModal();
+        if (e.target !== overlay) return;
+        if (overlay.querySelector(".stk-lore-menu")) closeMenu();
+        else closeModal();
     });
     bindModal(overlay.querySelector(".stk-lore-modal"));
 
