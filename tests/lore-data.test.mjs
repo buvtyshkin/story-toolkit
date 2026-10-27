@@ -6,6 +6,7 @@ import {
     splitEntries, sortEntries, preview,
     childFolders, folderOf, folderPath, flatFolders, deleteFolder, countBooks,
     GROUP_FIELD, groupEntries, moveGroup, reorderPlan,
+    normTitle, buildIndex, copiesOf, versionsOf, compareBooks, diffText,
 } from "../lore-data.js";
 
 const standard = (extra = {}) => ({ uid: 0, comment: "x", content: "y", order: 100, disable: false, ...STANDARD, ...extra });
@@ -169,4 +170,76 @@ test("moveGroup swaps neighbours and stops at the ends", () => {
 test("preview takes the first non-empty line", () => {
     assert.equal(preview("\n\n  Шрамы: много  \nещё"), "Шрамы: много");
     assert.equal(preview("a".repeat(200), 10).length, 10);
+});
+
+// ── Duplicates ──
+
+const books = new Map([
+    ["Фишер", [standard({ uid: 1, comment: "Семья", content: "мама" }), standard({ uid: 2, comment: "Шрамы", content: "много" }), standard({ uid: 3, comment: "Пусто", content: " " })]],
+    ["Джоли", [standard({ uid: 7, comment: "семья ", content: "мама" }), standard({ uid: 8, comment: "Шрамы", content: "мало" })]],
+    ["Ева", [standard({ uid: 4, comment: "Семья", content: "мама и папа" }), standard({ uid: 5, comment: "Другое", content: "много" }), standard({ uid: 6, comment: "Пусто", content: " " })]],
+]);
+
+test("copies: the same text in other books, one per book, empty texts ignored", () => {
+    const idx = buildIndex(books);
+    assert.deepEqual(copiesOf(idx, "Фишер", "мама"), [{ book: "Джоли", uid: 7 }]);
+    assert.deepEqual(copiesOf(idx, "Фишер", "много"), [{ book: "Ева", uid: 5 }]); // title does not matter
+    assert.deepEqual(copiesOf(idx, "Фишер", " "), []);
+    assert.deepEqual(copiesOf(idx, "Фишер", "нет такого"), []);
+});
+
+test("versions: same title (case, ё, spaces ignored), other text", () => {
+    assert.equal(normTitle("  Семья  Ёлкиных "), "семья елкиных");
+    const idx = buildIndex(books);
+    assert.deepEqual(versionsOf(idx, "Семья", "мама"), [{ content: "мама и папа", holders: [{ book: "Ева", uid: 4 }] }]);
+    assert.deepEqual(versionsOf(idx, "Шрамы", "много").map((x) => x.content), ["мало"]);
+    assert.deepEqual(versionsOf(idx, "Другое", "много"), []);
+});
+
+test("compareBooks pairs by text, then by title", () => {
+    const r = compareBooks(books.get("Фишер"), books.get("Ева"));
+    assert.deepEqual(r.same.map((p) => [p.a.uid, p.b.uid]), [[2, 5], [3, 6]]);
+    assert.deepEqual(r.changed.map((p) => [p.a.uid, p.b.uid]), [[1, 4]]);
+    assert.deepEqual([r.onlyA, r.onlyB], [[], []]);
+    const r2 = compareBooks(books.get("Фишер"), books.get("Джоли"));
+    assert.deepEqual(r2.same.map((p) => [p.a.uid, p.b.uid]), [[1, 7]]);
+    assert.deepEqual(r2.changed.map((p) => [p.a.uid, p.b.uid]), [[2, 8]]);
+    assert.deepEqual(r2.onlyA.map((e) => e.uid), [3]);
+});
+
+const side = (ops, op) => ops.filter((o) => o.op === "=" || o.op === op).map((o) => o.text).join("");
+
+test("diffText: a word replaced reads as one change", () => {
+    assert.deepEqual(diffText("У Ника три шрама на спине.", "У Ника два шрама на спине."), [
+        { op: "=", text: "У Ника " }, { op: "-", text: "три" }, { op: "+", text: "два" }, { op: "=", text: " шрама на спине." },
+    ]);
+    assert.deepEqual(diffText("same", "same"), [{ op: "=", text: "same" }]);
+    assert.deepEqual(diffText("", "new"), [{ op: "+", text: "new" }]);
+});
+
+test("diffText: neighbouring changed words fold into one replacement", () => {
+    assert.deepEqual(diffText("он был высокий", "она была высокая"),
+        [{ op: "-", text: "он был высокий" }, { op: "+", text: "она была высокая" }]);
+});
+
+test("diffText: added paragraph, whitespace change", () => {
+    assert.deepEqual(diffText("Первый.\nТретий.", "Первый.\nВторой.\nТретий."),
+        [{ op: "=", text: "Первый.\n" }, { op: "+", text: "Второй.\n" }, { op: "=", text: "Третий." }]);
+    const ws = diffText("a b", "a  b");
+    assert.equal(side(ws, "-"), "a b");
+    assert.equal(side(ws, "+"), "a  b");
+});
+
+test("diffText always rebuilds both texts", () => {
+    let seed = 7;
+    const rnd = (n) => (seed = (seed * 48271) % 2147483647) % n;
+    const vocab = ["Ник", "Джоли", " ", " ", "\n", ",", ".", "шрам", "дом", "война"];
+    const text = () => Array.from({ length: rnd(40) }, () => vocab[rnd(vocab.length)]).join("");
+    for (let k = 0; k < 300; k++) {
+        const a = text();
+        const b = rnd(2) ? text() : a.replace(/шрам/, "дом").replace(/\n/, "");
+        const ops = diffText(a, b);
+        assert.equal(side(ops, "-"), a);
+        assert.equal(side(ops, "+"), b);
+    }
 });

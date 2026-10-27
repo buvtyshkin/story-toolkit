@@ -219,6 +219,197 @@ export function moveGroup(groups, id, dir) {
     return groups;
 }
 
+// ── Duplicates across books ──
+//
+// "The same entry" = the same text, character for character. "Another
+// version" = the same title (case, ё and extra spaces ignored), other text.
+
+export function normTitle(title) {
+    return String(title || "").trim().toLowerCase().replace(/ё/g, "е").replace(/\s+/g, " ");
+}
+
+/**
+ * Who holds what. `books` iterates [bookName, entries[]] (a Map works).
+ * byContent: text -> [{ book, uid }]; byTitle: title -> Map(text -> [{ book, uid }]).
+ */
+export function buildIndex(books) {
+    const byContent = new Map();
+    const byTitle = new Map();
+    const add = (map, key, item) => {
+        if (!map.has(key)) map.set(key, []);
+        map.get(key).push(item);
+    };
+    for (const [book, entries] of books) {
+        for (const e of entries) {
+            const content = e.content || "";
+            if (!content.trim()) continue; // empty entries are not duplicates of anything
+            add(byContent, content, { book, uid: e.uid });
+            const title = normTitle(e.comment);
+            if (!title) continue;
+            if (!byTitle.has(title)) byTitle.set(title, new Map());
+            add(byTitle.get(title), content, { book, uid: e.uid });
+        }
+    }
+    return { byContent, byTitle };
+}
+
+const byBookName = (a, b) => a.book.localeCompare(b.book, "ru", { sensitivity: "base" });
+
+/** One holder per book, alphabetical, without `except`. */
+function perBook(holders, except) {
+    const seen = new Set([except]);
+    return holders.filter((h) => !seen.has(h.book) && seen.add(h.book)).sort(byBookName);
+}
+
+/** Other books with exactly this text: [{ book, uid }]. */
+export function copiesOf(index, book, content) {
+    return perBook(index.byContent.get(content || "") || [], book);
+}
+
+/**
+ * Other texts under the same title, the most widespread first:
+ * [{ content, holders: [{ book, uid }] }]. Versions inside the same book count too.
+ */
+export function versionsOf(index, title, content) {
+    const texts = index.byTitle.get(normTitle(title));
+    if (!texts) return [];
+    return [...texts]
+        .filter(([text]) => text !== (content || ""))
+        .map(([text, holders]) => ({ content: text, holders: perBook(holders, null) }))
+        .sort((a, b) => b.holders.length - a.holders.length);
+}
+
+/**
+ * Two books side by side. Entries pair up by identical text first, then the
+ * rest by title. Returns { same: [{a, b}], changed: [{a, b}], onlyA, onlyB }.
+ */
+export function compareBooks(entriesA, entriesB) {
+    const restB = [...entriesB];
+    const take = (match) => {
+        const i = restB.findIndex(match);
+        return i < 0 ? null : restB.splice(i, 1)[0];
+    };
+    const same = [];
+    const left = [];
+    for (const a of entriesA) {
+        const b = take((x) => (x.content || "") === (a.content || ""));
+        if (b) same.push({ a, b });
+        else left.push(a);
+    }
+    const changed = [];
+    const onlyA = [];
+    for (const a of left) {
+        const t = normTitle(a.comment);
+        const b = t ? take((x) => normTitle(x.comment) === t) : null;
+        if (b) changed.push({ a, b });
+        else onlyA.push(a);
+    }
+    return { same, changed, onlyA, onlyB: restB };
+}
+
+// ── Text diff ──
+
+const DIFF_CELLS = 3_000_000; // bigger pieces are shown as "replaced" whole
+
+/** Longest-common-subsequence diff of two token arrays: [[op, token]]. */
+function diffTokens(a, b) {
+    let start = 0;
+    while (start < a.length && start < b.length && a[start] === b[start]) start++;
+    let endA = a.length;
+    let endB = b.length;
+    while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) { endA--; endB--; }
+    const out = a.slice(0, start).map((t) => ["=", t]);
+    const A = a.slice(start, endA);
+    const B = b.slice(start, endB);
+    const n = A.length;
+    const m = B.length;
+    if (n * m > DIFF_CELLS) {
+        out.push(...A.map((t) => ["-", t]), ...B.map((t) => ["+", t]));
+    } else {
+        const w = m + 1;
+        const dp = new Uint32Array((n + 1) * w);
+        for (let i = n - 1; i >= 0; i--) {
+            for (let j = m - 1; j >= 0; j--) {
+                dp[i * w + j] = A[i] === B[j] ? dp[(i + 1) * w + j + 1] + 1 : Math.max(dp[(i + 1) * w + j], dp[i * w + j + 1]);
+            }
+        }
+        let i = 0;
+        let j = 0;
+        while (i < n && j < m) {
+            if (A[i] === B[j]) { out.push(["=", A[i]]); i++; j++; }
+            else if (dp[(i + 1) * w + j] >= dp[i * w + j + 1]) out.push(["-", A[i++]]);
+            else out.push(["+", B[j++]]);
+        }
+        while (i < n) out.push(["-", A[i++]]);
+        while (j < m) out.push(["+", B[j++]]);
+    }
+    out.push(...a.slice(endA).map((t) => ["=", t]));
+    return out;
+}
+
+function words(s) {
+    return s.match(/[\p{L}\p{N}_]+|\s+|[^\p{L}\p{N}_\s]/gu) || [];
+}
+
+/**
+ * What changed from text `a` to text `b`: [{ op: "=" | "-" | "+", text }].
+ * Lines first, then words inside the changed lines. Inside a change, removed
+ * text comes before added text, and tiny unchanged bits (a space between two
+ * changed words) are folded into the change so it reads as one replacement.
+ */
+export function diffText(a, b) {
+    const lines = (s) => (s ? s.split(/(?<=\n)/) : []);
+    const flat = [];
+    let del = "";
+    let ins = "";
+    const flushRun = () => {
+        if (del && ins) flat.push(...diffTokens(words(del), words(ins)));
+        else if (del) flat.push(["-", del]);
+        else if (ins) flat.push(["+", ins]);
+        del = ins = "";
+    };
+    for (const [op, line] of diffTokens(lines(a || ""), lines(b || ""))) {
+        if (op === "-") del += line;
+        else if (op === "+") ins += line;
+        else { flushRun(); flat.push(["=", line]); }
+    }
+    flushRun();
+
+    // Merge into runs: [{ op, text }] with changes as { del, ins }.
+    const runs = [];
+    for (const [op, text] of flat) {
+        const last = runs[runs.length - 1];
+        if (op === "=") {
+            if (last?.op === "=") last.text += text;
+            else runs.push({ op, text });
+        } else {
+            const run = last && last.op !== "=" ? last : (runs.push({ op: "~", del: "", ins: "" }), runs[runs.length - 1]);
+            run[op === "-" ? "del" : "ins"] += text;
+        }
+    }
+    // Fold short unchanged bits between two changes into them.
+    for (let i = 1; i < runs.length - 1; i++) {
+        const r = runs[i];
+        if (r.op === "=" && r.text.length <= 3 && !r.text.includes("\n") && runs[i - 1].op === "~" && runs[i + 1].op === "~") {
+            const prev = runs[i - 1];
+            const next = runs[i + 1];
+            prev.del += r.text + next.del;
+            prev.ins += r.text + next.ins;
+            runs.splice(i, 2);
+            i--;
+        }
+    }
+    const out = [];
+    for (const r of runs) {
+        if (r.op === "=") out.push({ op: "=", text: r.text });
+        else {
+            if (r.del) out.push({ op: "-", text: r.del });
+            if (r.ins) out.push({ op: "+", text: r.ins });
+        }
+    }
+    return out;
+}
+
 /** First non-empty line of the text, shortened. */
 export function preview(content, max = 110) {
     const line = String(content || "").split(/\r?\n/).find((l) => l.trim()) || "";

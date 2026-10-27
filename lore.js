@@ -22,6 +22,7 @@ import {
     STANDARD, isMemoryEntry, deviations, applyPatch, newEntryFields, splitEntries, sortEntries, preview,
     childFolders, folderOf, folderPath, flatFolders, deleteFolder, countBooks,
     GROUP_FIELD, groupEntries, moveGroup, reorderPlan,
+    buildIndex, copiesOf, versionsOf, compareBooks, diffText,
 } from "./lore-data.js";
 
 const TAG = "[STK Lore]";
@@ -37,6 +38,7 @@ const state = {
     stale: false,    // an outside save arrived while the user was typing or dragging
     sortMode: false, // "Порядок": drag entries to set priorities
     dragging: false,
+    compare: null,   // the other book of a two-book comparison
 };
 
 // uid -> { patch, timer } — text typed but not saved yet
@@ -185,9 +187,71 @@ async function flushAll() {
     await saveChain;
 }
 
+// ── All books, for duplicates ──
+//
+// A light copy of every lorebook's entries, read when the window opens and
+// kept current by WORLDINFO_UPDATED. Only read from, never saved.
+
+const library = {
+    books: new Map(), // name -> [{ uid, comment, content, order, disable, stmemorybooks }]
+    index: null,      // buildIndex(books), rebuilt lazily
+    ready: false,
+    loading: null,    // the running loadLibrary() promise
+};
+
+function libraryPut(name, data) {
+    library.books.set(name, Object.values(data?.entries || {}).map((e) => ({
+        uid: e.uid, comment: e.comment, content: e.content, order: e.order, disable: e.disable, stmemorybooks: e.stmemorybooks,
+    })));
+    library.index = null;
+}
+
+function libIndex() {
+    if (!library.index) library.index = buildIndex(library.books);
+    return library.index;
+}
+
+function loadLibrary() {
+    if (library.loading) return library.loading;
+    library.loading = (async () => {
+        const names = bookNames();
+        for (const n of [...library.books.keys()]) if (!names.includes(n)) library.books.delete(n);
+        library.index = null;
+        let done = 0;
+        const queue = [...names];
+        const worker = async () => {
+            while (queue.length) {
+                const name = queue.shift();
+                try {
+                    const data = await getContext().loadWorldInfo(name); // from cache when it can
+                    if (data?.entries) libraryPut(name, data);
+                } catch (e) {
+                    console.warn(`${TAG} could not read "${name}" for duplicates:`, e);
+                }
+                if (!library.ready) setStatus(`Ищу дубли: ${++done}/${names.length}`);
+            }
+        };
+        await Promise.all([worker(), worker(), worker(), worker()]);
+        const first = !library.ready;
+        library.ready = true;
+        if (first) setStatus("");
+        refreshEntries();
+    })().finally(() => { library.loading = null; });
+    return library.loading;
+}
+
+/** Re-render the entries now, or once the user stops typing or dragging. */
+function refreshEntries() {
+    if (!modal()) return;
+    const typing = document.activeElement?.closest?.(`#${OVERLAY_ID} .stk-lore-edit`);
+    if (typing || pending.size || state.dragging) state.stale = true;
+    else renderEntries();
+}
+
 // ── Actions ──
 
-async function openBook(name) {
+/** Open a book; `uid` expands that entry (coming from a duplicate in another book). */
+async function openBook(name, uid = null) {
     await flushAll();
     const data = await getContext().loadWorldInfo(name);
     if (!data?.entries) {
@@ -196,12 +260,20 @@ async function openBook(name) {
     }
     state.book = name;
     state.data = data; // loadWorldInfo hands out a clone already
-    state.openUid = null;
+    state.openUid = uid !== null && data.entries[uid] ? String(uid) : null;
     state.stale = false;
     state.sortMode = false;
-    settings().lastBook = name;
+    state.compare = null;
+    const s = settings();
+    s.lastBook = name;
+    const target = state.openUid !== null ? data.entries[state.openUid] : null;
+    if (target && isMemoryEntry(target)) s.memoriesOpen = true;
+    else if (target) delete s.groupsCollapsed[s.groups.some((g) => g.id === target[GROUP_FIELD]) ? target[GROUP_FIELD] : ""];
     saveSettings();
     render();
+    if (state.openUid !== null) {
+        modal()?.querySelector(`.stk-lore-entry[data-uid="${state.openUid}"]`)?.scrollIntoView({ block: "start" });
+    }
 }
 
 async function addEntry() {
@@ -448,6 +520,243 @@ async function makeStandard(uid) {
     renderEntries();
 }
 
+// ── Duplicates: the same entry in other books, other versions, two-book comparison ──
+
+/** Other books with the same text; other texts under the same title. Empty until all books are read. */
+function dupInfo(e) {
+    if (!library.ready || !state.book || !e) return { copies: [], versions: [] };
+    const idx = libIndex();
+    return { copies: copiesOf(idx, state.book, e.content), versions: versionsOf(idx, e.comment, e.content) };
+}
+
+const inBooks = (n) => `${n} ${plural(n, "лорбуке", "лорбуках", "лорбуках")}`;
+const booksCount = (n) => `${n} ${plural(n, "лорбук", "лорбука", "лорбуков")}`;
+const TIP_LINES = 14;
+
+function copiesMenu(anchor, uid) {
+    const { copies } = dupInfo(state.data.entries[uid]);
+    if (!copies.length) return;
+    openMenu(anchor, [
+        { header: `Точно такая же запись есть ещё в ${inBooks(copies.length)} — открыть:` },
+        ...copies.map((c) => ({ label: c.book, run: () => openBook(c.book, c.uid) })),
+    ]);
+}
+
+/** Hover hint over a ⧉ / ≠ mark (desktop; a tap opens the menu or the panel instead). */
+function showTip(mark) {
+    hideTip();
+    const e = state.data?.entries?.[entryUid(mark)];
+    const { copies, versions } = dupInfo(e);
+    const lines = mark.dataset.tip === "copies"
+        ? copies.map((c) => c.book)
+        : versions.map((v, i) => `Версия ${i + 1}: ${v.holders.map((h) => h.book).join(", ")}`);
+    if (!lines.length) return;
+    const more = lines.length - TIP_LINES;
+    const tip = document.createElement("div");
+    tip.className = "stk-lore-tip";
+    tip.innerHTML = `
+        <b>${mark.dataset.tip === "copies" ? `Точно такая же запись есть ещё в ${inBooks(copies.length)}:` : "То же название, другой текст:"}</b>
+        ${lines.slice(0, TIP_LINES).map((l) => `<div>• ${escHtml(l)}</div>`).join("")}
+        ${more > 0 ? `<div>…и ещё ${more}</div>` : ""}
+        <small>${mark.dataset.tip === "copies" ? "Нажмите, чтобы открыть" : "Нажмите, чтобы сравнить"}</small>`;
+    const m = modal();
+    m.appendChild(tip);
+    const a = mark.getBoundingClientRect();
+    const box = m.getBoundingClientRect();
+    const left = Math.min(a.left - box.left, box.width - tip.offsetWidth - 8);
+    const below = a.bottom - box.top + 4;
+    const top = below + tip.offsetHeight > box.height - 8 ? a.top - box.top - tip.offsetHeight - 4 : below;
+    tip.style.left = `${Math.max(8, left)}px`;
+    tip.style.top = `${Math.max(8, top)}px`;
+}
+
+function hideTip() {
+    modal()?.querySelectorAll(".stk-lore-tip").forEach((t) => t.remove());
+}
+
+const DIFF_KEEP = 160; // unchanged text kept around a change; the rest folds away
+
+/** A diff of two texts with a legend; long unchanged stretches fold, "весь текст" shows them. */
+function diffHtml(a, b, hereLabel, thereLabel) {
+    const ops = diffText(a || "", b || "");
+    const changes = ops.filter((o) => o.op !== "=");
+    const spacesOnly = changes.length && changes.every((o) => !o.text.trim());
+    let folded = false;
+    const body = ops.map((o, i) => {
+        if (o.op !== "=") {
+            // A change of spaces or line breaks alone would be invisible: show them.
+            const t = o.text.trim() ? o.text : o.text.replace(/ /g, "·").replace(/\t/g, "→").replace(/\n/g, "↵\n");
+            return o.op === "-" ? `<del>${escHtml(t)}</del>` : `<ins>${escHtml(t)}</ins>`;
+        }
+        const head = i === 0 ? 0 : DIFF_KEEP;
+        const tail = i === ops.length - 1 ? 0 : DIFF_KEEP;
+        if (o.text.length <= head + tail + 80) return escHtml(o.text);
+        folded = true;
+        const mid = o.text.slice(head, o.text.length - tail);
+        return `${escHtml(o.text.slice(0, head))}<span class="stk-lore-cut">${escHtml(mid)}</span>` +
+            `<span class="stk-lore-gap">⋯ ${mid.length} симв. без изменений ⋯</span>${escHtml(o.text.slice(o.text.length - tail))}`;
+    }).join("");
+    return `
+        <div class="stk-lore-diffbox">
+            <div class="stk-lore-legend">
+                <del>красным</del> — только ${escHtml(hereLabel)}, <ins>зелёным</ins> — только ${escHtml(thereLabel)}.
+                ${spacesOnly ? "<b>Отличаются только пробелами и переносами строк.</b>" : ""}
+                ${folded ? `<button class="stk-lore-linkbtn" data-diff-full>показать весь текст</button>` : ""}
+            </div>
+            <div class="stk-lore-diff">${body}</div>
+        </div>`;
+}
+
+function toggleDiffFull(btn) {
+    const box = btn.closest(".stk-lore-diffbox");
+    box.classList.toggle("full");
+    btn.textContent = box.classList.contains("full") ? "свернуть неизменённое" : "показать весь текст";
+}
+
+/** Other versions of an entry's text, compared to this one. */
+function versionsPanel(uid) {
+    closeMenu();
+    hideTip();
+    const e = state.data.entries[uid];
+    const { versions } = dupInfo(e);
+    if (!versions.length) return;
+    let pick = 0;
+    const panel = document.createElement("div");
+    panel.className = "stk-lore-menu stk-lore-panel";
+    const draw = () => {
+        const v = versions[pick];
+        panel.innerHTML = `
+            <div class="stk-lore-panel-head">
+                <b>«${escHtml(e.comment)}» — другие версии текста</b>
+                <button class="menu_button sf-card-btn" data-pact="close" title="Закрыть">✖</button>
+            </div>
+            ${versions.length > 1 ? `<div class="stk-lore-chips">${versions.map((x, i) => `
+                <button class="stk-lore-chip${i === pick ? " active" : ""}" data-pact="pick" data-i="${i}">Версия ${i + 1} · ${booksCount(x.holders.length)}</button>`).join("")}</div>` : ""}
+            <div class="stk-lore-where">Эта версия лежит в: ${v.holders.map((h) =>
+                `<button class="stk-lore-linkbtn" data-open-book="${escAttr(h.book)}" data-uid="${h.uid}">${escHtml(h.book)}</button>`).join(", ")}</div>
+            ${diffHtml(e.content, v.content, "в этом лорбуке", "в этой версии")}`;
+    };
+    draw();
+    panel.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const full = ev.target.closest("[data-diff-full]");
+        if (full) return toggleDiffFull(full);
+        const jump = ev.target.closest("[data-open-book]");
+        if (jump) {
+            panel.remove();
+            return openBook(jump.dataset.openBook, jump.dataset.uid);
+        }
+        const act = ev.target.closest("[data-pact]");
+        if (act?.dataset.pact === "close") return panel.remove();
+        if (act?.dataset.pact === "pick") {
+            pick = Number(act.dataset.i);
+            draw();
+        }
+    });
+    modal().appendChild(panel);
+}
+
+async function compareMenu(anchor) {
+    if (!library.ready) {
+        setStatus("Читаю лорбуки…");
+        await loadLibrary();
+    }
+    // Books sharing the most identical entries with this one go first
+    // (counted the way the comparison pairs them).
+    const mine = Object.values(state.data.entries);
+    const names = bookNames().filter((n) => n !== state.book);
+    const shared = new Map(names.map((n) => [n, compareBooks(mine, library.books.get(n) || []).same.length]));
+    names.sort((a, b) => (shared.get(b) || 0) - (shared.get(a) || 0) || a.localeCompare(b, "ru", { sensitivity: "base" }));
+    openMenu(anchor, [
+        { header: "Сравнить с… (сверху — самые похожие)" },
+        ...names.map((n) => ({ label: n + (shared.get(n) ? ` — общих: ${shared.get(n)}` : ""), run: () => startCompare(n) })),
+    ]);
+}
+
+async function startCompare(other) {
+    await flushAll();
+    state.compare = other;
+    state.sortMode = false;
+    state.openUid = null;
+    renderEntries();
+    modal()?.querySelector(".stk-lore-entries")?.scrollTo(0, 0);
+}
+
+let cmp = null; // the comparison on screen, for filling rows when they open
+
+function compareHtml() {
+    const other = state.compare;
+    cmp = compareBooks(Object.values(state.data.entries), library.books.get(other) || []);
+    const { same, changed, onlyA, onlyB } = cmp;
+    const tuned = (p) => (p.a.order ?? 100) !== (p.b.order ?? 100) || !!p.a.disable !== !!p.b.disable;
+    const nTuned = same.filter(tuned).length;
+    const name = (e) => `${isMemoryEntry(e) ? "🧠 " : ""}${e.comment ? escHtml(e.comment) : "<i>без названия</i>"}`;
+    const one = (e) => `<span class="stk-lore-prio" title="Приоритет">${e.order ?? 100}</span>${e.disable ? `<span class="stk-lore-offtag">выкл.</span>` : ""}`;
+    const pair = (p) => {
+        const oa = p.a.order ?? 100;
+        const ob = p.b.order ?? 100;
+        const prio = oa === ob
+            ? `<span class="stk-lore-prio" title="Приоритет">${oa}</span>`
+            : `<span class="stk-lore-prio differs" title="Приоритет: здесь / в «${escAttr(other)}»">${oa} / ${ob}</span>`;
+        const off = !!p.a.disable === !!p.b.disable
+            ? (p.a.disable ? `<span class="stk-lore-offtag">выкл.</span>` : "")
+            : `<span class="stk-lore-offtag differs">${p.a.disable ? "выкл. здесь" : "выкл. там"}</span>`;
+        return prio + off;
+    };
+    const row = (key, e, meta) => `
+        <details class="stk-lore-cmprow" data-cmp="${key}">
+            <summary><span class="stk-lore-main"><span class="stk-lore-title">${name(e)}</span>
+                <span class="stk-lore-preview">${escHtml(preview(e.content))}</span></span>${meta}</summary>
+            <div class="stk-lore-cmpbody"></div>
+        </details>`;
+    const section = (title, items, open) => items.length ? `
+        <details class="stk-lore-cmpsec" ${open ? "open" : ""}>
+            <summary>${title} · ${items.length}</summary>
+            <div class="stk-lore-list">${items.join("")}</div>
+        </details>` : "";
+    const B = `«${escHtml(other)}»`;
+    return `
+        <div class="stk-lore-cmphead">
+            <b>⇄ Сравнение с ${B}</b>
+            <button class="menu_button sf-card-btn" data-act="compare-close">✖ Закрыть сравнение</button>
+        </div>
+        <p class="stk-lore-stats">Одинаковый текст: ${same.length}${nTuned ? ` (у ${nTuned} другой приоритет или вкл./выкл.)` : ""}
+            · Разный текст: ${changed.length} · Только здесь: ${onlyA.length} · Только в ${B}: ${onlyB.length}</p>
+        ${!changed.length && !onlyA.length && !onlyB.length && !nTuned ? `<p class="stk-note">Лорбуки совпадают полностью.</p>` : ""}
+        ${section("Одно название — разный текст", changed.map((p, i) => row(`c${i}`, p.a, pair(p))), true)}
+        ${section("Только здесь", onlyA.map((e, i) => row(`a${i}`, e, one(e))), true)}
+        ${section(`Только в ${B}`, onlyB.map((e, i) => row(`b${i}`, e, one(e))), true)}
+        ${section("Одинаковый текст", sortEntries(same.map((p) => p.a)).map((a) => {
+            const i = same.findIndex((p) => p.a === a);
+            return row(`s${i}`, a, pair(same[i]));
+        }), false)}`;
+}
+
+/** A comparison row opened: show its text, or the diff for "разный текст". */
+function fillCmpRow(row) {
+    const body = row.querySelector(".stk-lore-cmpbody");
+    if (!cmp || body.dataset.filled) return;
+    body.dataset.filled = "1";
+    const kind = row.dataset.cmp[0];
+    const i = Number(row.dataset.cmp.slice(1));
+    const open = (book, e) => `<button class="stk-lore-linkbtn" data-open-book="${escAttr(book)}" data-uid="${e.uid}">открыть в «${escHtml(book)}»</button>`;
+    const text = (e) => `<div class="stk-lore-cmptext">${escHtml(e.content || "")}</div>`;
+    if (kind === "c") {
+        const { a, b } = cmp.changed[i];
+        const sameTitle = (a.comment || "") === (b.comment || "");
+        body.innerHTML = (sameTitle ? "" : `<div class="stk-lore-where">Там называется «${escHtml(b.comment)}».</div>`) +
+            diffHtml(a.content, b.content, "здесь", `в «${state.compare}»`) +
+            `<div class="stk-lore-where">${open(state.book, a)} · ${open(state.compare, b)}</div>`;
+    } else if (kind === "a") {
+        body.innerHTML = text(cmp.onlyA[i]) + `<div class="stk-lore-where">${open(state.book, cmp.onlyA[i])}</div>`;
+    } else if (kind === "b") {
+        body.innerHTML = text(cmp.onlyB[i]) + `<div class="stk-lore-where">${open(state.compare, cmp.onlyB[i])}</div>`;
+    } else {
+        const { a, b } = cmp.same[i];
+        body.innerHTML = text(a) + `<div class="stk-lore-where">${open(state.book, a)} · ${open(state.compare, b)}</div>`;
+    }
+}
+
 // ── UI ──
 
 function setStatus(text) {
@@ -630,6 +939,7 @@ function groupSelectHtml(e) {
 /** Memories are edited like any entry; their settings belong to Memory Books, so no ⚠ for them. */
 function entryHtml(e, memory = false) {
     const dev = memory ? [] : deviations(e);
+    const { copies, versions } = dupInfo(e);
     const open = String(e.uid) === String(state.openUid);
     const title = e.comment || "";
     const head = `
@@ -640,6 +950,8 @@ function entryHtml(e, memory = false) {
                 ${open ? "" : `<div class="stk-lore-preview">${escHtml(preview(e.content))}</div>`}
             </div>
             ${dev.length ? `<span class="stk-lore-warn" title="${escAttr("Не по стандарту: " + dev.join("; "))}">⚠</span>` : ""}
+            ${copies.length ? `<button class="stk-lore-dup" data-act="copies" data-tip="copies" aria-label="Такая же запись есть ещё в ${inBooks(copies.length)}">⧉ ${copies.length}</button>` : ""}
+            ${versions.length ? `<button class="stk-lore-dup stk-lore-ver" data-act="versions" data-tip="versions" aria-label="Другие версии текста: ${versions.length}">≠ ${versions.length}</button>` : ""}
             <span class="stk-lore-prio" title="Приоритет">${e.order ?? 100}</span>
         </div>`;
     if (!open) return `<div class="stk-lore-entry${e.disable ? " off" : ""}" data-uid="${e.uid}">${head}</div>`;
@@ -659,6 +971,11 @@ function entryHtml(e, memory = false) {
             ${dev.length ? `
             <div class="stk-lore-devs">⚠ Не по стандарту: ${escHtml(dev.join("; "))}.
                 <button class="menu_button sf-card-btn" data-act="standard">Привести к стандарту</button></div>` : ""}
+            ${copies.length || versions.length ? `
+            <div class="stk-lore-dupinfo">
+                ${copies.length ? `<button class="stk-lore-linkbtn" data-act="copies">⧉ Точно такая же запись — ещё в ${inBooks(copies.length)}</button>` : ""}
+                ${versions.length ? `<button class="stk-lore-linkbtn" data-act="versions">≠ Другие версии текста с этим названием: ${versions.length} — сравнить</button>` : ""}
+            </div>` : ""}
             <div class="stk-lore-edit-foot">
                 <span class="stk-lore-chars">${(e.content || "").length} симв.</span>
                 ${memory
@@ -689,10 +1006,11 @@ function renderEntries() {
             <button class="menu_button sf-card-btn stk-lore-back" data-act="back">← Лорбуки</button>
             <h4 class="stk-lore-bookname">${escHtml(state.book)}</h4>
         </div>
-        <div class="stk-lore-toolbar">
+        ${state.compare ? compareHtml() : `<div class="stk-lore-toolbar">
             ${state.sortMode ? "" : `
             <button class="menu_button" data-act="add">＋ Новая запись</button>
-            <button class="menu_button" data-act="groups">🗂 Группы</button>`}
+            <button class="menu_button" data-act="groups">🗂 Группы</button>
+            <button class="menu_button" data-act="compare">⇄ Сравнить</button>`}
             <button class="menu_button stk-lore-sortbtn${state.sortMode ? " active" : ""}" data-act="sort-mode">${state.sortMode ? "✓ Готово" : "↕ Порядок"}</button>
             <span class="stk-lore-stats">${regular.length} записей${off ? ` · выкл. ${off}` : ""}${odd ? ` · ⚠ ${odd}` : ""}</span>
         </div>
@@ -703,7 +1021,7 @@ function renderEntries() {
         <details class="stk-lore-memories" ${settings().memoriesOpen === false ? "" : "open"}>
             <summary>🧠 Воспоминания Memory Books (${memories.length}${memOff ? ` · выкл. ${memOff}` : ""})</summary>
             ${listHtml(memories, true)}
-        </details>` : ""}`}`;
+        </details>` : ""}`}`}`;
 
     box.querySelector(".stk-lore-memories")?.addEventListener("toggle", (e) => {
         settings().memoriesOpen = e.target.open;
@@ -779,6 +1097,10 @@ function bindModal(m) {
         }
         const more = e.target.closest("[data-menu]");
         if (more) return more.dataset.menu === "folder" ? folderMenu(more, more.dataset.id) : bookMenu(more, more.dataset.id);
+        const jump = e.target.closest("[data-open-book]");
+        if (jump) return openBook(jump.dataset.openBook, jump.dataset.uid);
+        const full = e.target.closest("[data-diff-full]");
+        if (full) return toggleDiffFull(full);
         const book = e.target.closest(".stk-lore-book");
         if (book) return openBook(book.dataset.book);
         if (e.target.closest(".stk-lore-close")) return closeModal();
@@ -803,6 +1125,13 @@ function bindModal(m) {
         }
         if (act === "new-folder") return newFolder();
         if (act === "groups") return groupsPanel();
+        if (act === "copies") { hideTip(); return copiesMenu(actEl, uid); }
+        if (act === "versions") return versionsPanel(uid);
+        if (act === "compare") return compareMenu(actEl);
+        if (act === "compare-close") {
+            state.compare = null;
+            return renderEntries();
+        }
         if (act === "sort-mode") {
             await flushAll();
             state.sortMode = !state.sortMode;
@@ -844,6 +1173,19 @@ function bindModal(m) {
             setEntryGroup(uid, e.target);
         }
     });
+
+    m.addEventListener("mouseover", (e) => {
+        const mark = e.target.closest?.("[data-tip]");
+        if (mark && !mark.contains(e.relatedTarget)) showTip(mark);
+    });
+    m.addEventListener("mouseout", (e) => {
+        const mark = e.target.closest?.("[data-tip]");
+        if (mark && !mark.contains(e.relatedTarget)) hideTip();
+    });
+    // "toggle" does not bubble: listen in the capture phase.
+    m.addEventListener("toggle", (e) => {
+        if (e.target.matches?.(".stk-lore-cmprow") && e.target.open) fillCmpRow(e.target);
+    }, true);
 
     m.addEventListener("pointerdown", (e) => {
         const handle = e.target.closest(".stk-lore-handle");
@@ -949,6 +1291,7 @@ function openLorePopup() {
         else closeModal();
     });
     bindModal(overlay.querySelector(".stk-lore-modal"));
+    loadLibrary();
 
     // Reopen the last book; on a phone start from the list of books.
     const last = settings().lastBook;
@@ -963,11 +1306,13 @@ function openLorePopup() {
 
 /** Someone else (Memory Books, SillyTavern's editor) saved the open book. */
 function onWorldInfoUpdated(name, data) {
-    if (ownSave || name !== state.book || !modal() || !data?.entries) return;
-    state.data = structuredClone(data);
-    const typing = document.activeElement?.closest?.(`#${OVERLAY_ID} .stk-lore-edit`);
-    if (typing || pending.size || state.dragging) state.stale = true;
-    else renderEntries();
+    if (!data?.entries) return;
+    if (library.ready || library.loading) libraryPut(name, data);
+    if (ownSave || !modal()) return;
+    if (name === state.book) state.data = structuredClone(data);
+    // Another book changed: only the duplicate marks or the comparison may differ.
+    // (A comparison on screen only cares about its two books: re-rendering closes its open rows.)
+    if (name === state.book || name === state.compare || (library.ready && !state.compare)) refreshEntries();
 }
 
 // ── Init ──

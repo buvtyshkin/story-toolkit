@@ -38,7 +38,7 @@ are near-duplicates of each other (e.g. "Семья" exists in 38 books).
       standard (constant, before char, 100%). Non-standard entries get a ⚠ and
       an explicit "make standard" button. Memory Books section.
 - [x] 2. Structure: folders for books; groups for entries.
-- [ ] 3. Duplicates: hover shows the books with an identical entry; a mark for
+- [x] 3. Duplicates: hover shows the books with an identical entry; a mark for
       "same title, different text" with a diff view; two-book comparison.
 - [ ] 4. Copy/move to one or several books, bulk on/off, priority, delete,
       group; conflict prompt on same title.
