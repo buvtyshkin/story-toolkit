@@ -42,7 +42,7 @@ are near-duplicates of each other (e.g. "Семья" exists in 38 books).
       "same title, different text" with a diff view; two-book comparison.
 - [x] 4. Copy/move to one or several books, bulk on/off, priority, delete,
       group; conflict prompt on same title.
-- [ ] 5. Search across all books.
+- [x] 5. Search across all books (the archive excluded).
 - [x] Extra (asked after step 2): "Порядок" mode — drag entries (or arrows) to set
       priorities in prompt order; entry <-> Memory Books memory (the stmemorybooks flag).
 - [x] Extra (asked with step 4): system folder "Архив" — archived books stay usable in

@@ -353,6 +353,83 @@ export function backupFileName(book, date = new Date()) {
     return `lorebook-backup_${slug}_${stamp}.json`;
 }
 
+// ── Search across books ──
+//
+// Every word of the query must occur in the title or the text, in any order;
+// case and ё/е do not matter. Identical texts from several books are one hit.
+
+function normText(s) {
+    return String(s || "").toLowerCase().replace(/ё/g, "е");
+}
+
+export function searchWords(query) {
+    return normText(query).split(/\s+/).filter(Boolean);
+}
+
+/**
+ * books iterates [bookName, entries[]]. Returns hits, title matches first:
+ * [{ title, content, memory, holders: [{ book, uid, title, disable }] }].
+ */
+export function searchEntries(books, query) {
+    const words = searchWords(query);
+    if (!words.length) return [];
+    const byText = new Map();
+    for (const [book, entries] of books) {
+        for (const e of entries) {
+            const title = normText(e.comment);
+            if (!words.every((w) => title.includes(w) || normText(e.content).includes(w))) continue;
+            // Entries without text are told apart by title.
+            const key = e.content ? e.content : "\u0000" + title;
+            let hit = byText.get(key);
+            if (!hit) {
+                hit = { title: e.comment || "", content: e.content || "", memory: isMemoryEntry(e), inTitle: words.some((w) => title.includes(w)), holders: [] };
+                byText.set(key, hit);
+            }
+            hit.holders.push({ book, uid: e.uid, title: e.comment || "", disable: !!e.disable });
+        }
+    }
+    for (const hit of byText.values()) hit.holders.sort(byBookName);
+    return [...byText.values()].sort((a, b) =>
+        b.inTitle - a.inTitle || a.title.localeCompare(b.title, "ru", { sensitivity: "base" }));
+}
+
+function hitPattern(words) {
+    if (!words.length) return null;
+    const alt = [...words].sort((a, b) => b.length - a.length)
+        .map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/е/g, "[её]"));
+    return new RegExp(alt.join("|"), "giu");
+}
+
+/** The text cut into [{ text, hit }] pieces, hits being the query words. */
+export function highlightParts(text, words) {
+    const s = String(text || "");
+    const re = hitPattern(words);
+    if (!re) return [{ text: s, hit: false }];
+    const out = [];
+    let last = 0;
+    for (const m of s.matchAll(re)) {
+        if (!m[0]) continue;
+        if (m.index > last) out.push({ text: s.slice(last, m.index), hit: false });
+        out.push({ text: m[0], hit: true });
+        last = m.index + m[0].length;
+    }
+    if (last < s.length) out.push({ text: s.slice(last), hit: false });
+    return out;
+}
+
+/** A one-line piece of the text around the first hit (the start if the hit is in the title only). */
+export function snippetOf(text, words, radius = 90) {
+    const s = String(text || "").replace(/\s+/g, " ").trim();
+    const re = hitPattern(words);
+    const at = re ? s.search(re) : -1;
+    if (at < 0) return s.length > radius * 2 ? s.slice(0, radius * 2).trimEnd() + "…" : s;
+    let start = Math.max(0, at - radius);
+    let end = Math.min(s.length, at + radius * 2);
+    if (start > 0) start = s.indexOf(" ", start) + 1 || start;
+    if (end < s.length) end = s.lastIndexOf(" ", end) > at ? s.lastIndexOf(" ", end) : end;
+    return (start > 0 ? "…" : "") + s.slice(start, end) + (end < s.length ? "…" : "");
+}
+
 // ── Text diff ──
 
 const DIFF_CELLS = 3_000_000; // bigger pieces are shown as "replaced" whole

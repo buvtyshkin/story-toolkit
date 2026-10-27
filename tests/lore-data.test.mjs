@@ -8,6 +8,7 @@ import {
     GROUP_FIELD, groupEntries, moveGroup, reorderPlan,
     normTitle, buildIndex, copiesOf, versionsOf, compareBooks, diffText,
     placeCopy, parsePriority, backupFileName,
+    searchWords, searchEntries, highlightParts, snippetOf,
 } from "../lore-data.js";
 
 const standard = (extra = {}) => ({ uid: 0, comment: "x", content: "y", order: 100, disable: false, ...STANDARD, ...extra });
@@ -271,4 +272,47 @@ test("backupFileName passes SillyTavern's file name rule", () => {
     assert.equal(backupFileName("!Fisher Jolie non-card MAIN (2)", at), "lorebook-backup_Fisher_Jolie_non-card_MAIN_2_20261027-030405.json");
     assert.equal(backupFileName("???", at), "lorebook-backup_book_20261027-030405.json");
     for (const n of ["Карнос (Самый последний)", "Мир Цербера", "a/b\c"]) assert.match(backupFileName(n), /^[a-zA-Z0-9_\-.]+$/);
+});
+
+// ── Search ──
+
+const lib = new Map([
+    ["Фишер", [standard({ uid: 1, comment: "Шрамы", content: "Шрам на спине от осколка." }), standard({ uid: 2, comment: "Семья", content: "Отец ушёл рано." })]],
+    ["Джоли", [standard({ uid: 5, comment: "Шрамы и татуировки", content: "Шрам на спине от осколка.", disable: true }), standard({ uid: 6, comment: "Ёлка", content: "" })]],
+]);
+
+test("search: all words in any order, case and ё ignored, identical texts merged", () => {
+    assert.deepEqual(searchWords("  Спине  ШРАМ "), ["спине", "шрам"]);
+    const hits = searchEntries(lib, "спине шрам");
+    assert.equal(hits.length, 1);
+    assert.deepEqual(hits[0].holders.map((h) => [h.book, h.uid, h.disable]), [["Джоли", 5, true], ["Фишер", 1, false]]);
+    assert.deepEqual(searchEntries(lib, "ушел").map((h) => h.title), ["Семья"]); // ё in the text, е in the query
+    assert.deepEqual(searchEntries(lib, "елка").map((h) => h.title), ["Ёлка"]);  // title only, empty text
+    assert.deepEqual(searchEntries(lib, "шрам отец"), []);                        // words from two entries do not combine
+    assert.deepEqual(searchEntries(lib, "   "), []);
+});
+
+test("search: title matches come first", () => {
+    const hits = searchEntries(new Map([["A", [
+        standard({ uid: 1, comment: "Быт", content: "про семью" }),
+        standard({ uid: 2, comment: "Семья", content: "мама" }),
+    ]]]), "семь");
+    assert.deepEqual(hits.map((h) => h.title), ["Семья", "Быт"]);
+});
+
+test("highlightParts marks every word, ё and е alike, and keeps the text whole", () => {
+    const parts = highlightParts("Ёлка и елка. Шрам (1)", searchWords("ёлка шрам (1)"));
+    assert.deepEqual(parts.filter((p) => p.hit).map((p) => p.text), ["Ёлка", "елка", "Шрам", "(1)"]);
+    assert.equal(parts.map((p) => p.text).join(""), "Ёлка и елка. Шрам (1)");
+    assert.deepEqual(highlightParts("abc", []), [{ text: "abc", hit: false }]);
+});
+
+test("snippetOf shows the text around the first hit", () => {
+    const text = "Начало. " + "слово ".repeat(60) + "ШРАМ на спине. " + "хвост ".repeat(60);
+    const s = snippetOf(text, ["шрам"], 30);
+    assert.match(s, /^…/);
+    assert.match(s, /ШРАМ на спине/);
+    assert.match(s, /…$/);
+    assert.ok(s.length < 140);
+    assert.equal(snippetOf("Коротко.", ["нет"]), "Коротко.");
 });

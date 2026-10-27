@@ -18,6 +18,7 @@
 //  Архив — системная папка: лорбуки в нём не участвуют в поиске
 //  дублей, сравнениях и копировании. Перед массовыми действиями
 //  лорбук сохраняется в файлы пользователя (lorebook-backup_…).
+//  Поиск по записям — по всем лорбукам, кроме архива.
 // ============================================================
 
 import { getContext, getPopupClass, toolkitSettings, saveSettings, eventSource, event_types, worldInfo } from "./st.js";
@@ -28,6 +29,7 @@ import {
     GROUP_FIELD, groupEntries, moveGroup, reorderPlan,
     buildIndex, copiesOf, versionsOf, compareBooks, diffText,
     placeCopy, parsePriority, backupFileName,
+    searchWords, searchEntries, highlightParts, snippetOf,
 } from "./lore-data.js";
 
 const TAG = "[STK Lore]";
@@ -45,6 +47,8 @@ const state = {
     dragging: false,
     compare: null,   // the other book of a two-book comparison
     select: null,    // Set of picked uids while choosing entries for bulk actions
+    searching: false, // the right pane shows the search across all books
+    query: "",       // kept when the search is closed and opened again
 };
 
 // uid -> { patch, timer } — text typed but not saved yet
@@ -304,6 +308,7 @@ async function openBook(name, uid = null) {
     state.sortMode = false;
     state.compare = null;
     state.select = null;
+    state.searching = false;
     const s = settings();
     s.lastBook = name;
     const target = state.openUid !== null ? data.entries[state.openUid] : null;
@@ -1201,6 +1206,86 @@ async function copyFlow(uids, move) {
     modal().appendChild(panel);
 }
 
+// ── Search across all books (the archive excluded) ──
+
+const SEARCH_SHOW = 100;
+let hits = [];       // the results on screen, for filling rows when they open
+let searchTimer = 0;
+
+async function openSearch() {
+    await flushAll();
+    state.searching = true;
+    state.sortMode = false;
+    state.compare = null;
+    state.select = null;
+    state.openUid = null;
+    render();
+    modal()?.querySelector(".stk-lore-q")?.focus();
+    if (!library.ready) loadLibrary(); // re-renders the results when done
+}
+
+function closeSearch() {
+    state.searching = false;
+    render();
+}
+
+/** Escaped text with the query words in <mark>. */
+function marked(text, words) {
+    return highlightParts(text, words)
+        .map((p) => (p.hit ? `<mark class="stk-lore-mark">${escHtml(p.text)}</mark>` : escHtml(p.text))).join("");
+}
+
+function searchViewHtml() {
+    return `
+        <div class="stk-lore-bookhead">
+            <button class="menu_button sf-card-btn stk-lore-back" data-act="search-close">← Лорбуки</button>
+            <h4 class="stk-lore-bookname">🔍 Поиск по записям</h4>
+            <button class="menu_button sf-card-btn stk-lore-search-x" data-act="search-close" title="Закрыть поиск">✖</button>
+        </div>
+        <input class="text_pole stk-lore-q" type="search" autocomplete="off" placeholder="Слова из названия или текста записи…" value="${escAttr(state.query)}">
+        <p class="stk-note">Находятся записи, где есть все слова — в любом порядке; регистр и ё не важны. Лорбуки из архива не участвуют.</p>
+        <div class="stk-lore-results">${resultsHtml()}</div>`;
+}
+
+function resultsHtml() {
+    const words = searchWords(state.query);
+    hits = [];
+    if (!words.length) return "";
+    if (!library.ready) return `<p class="stk-note">Читаю лорбуки…</p>`;
+    hits = searchEntries(library.books, state.query);
+    if (!hits.length) return `<p class="stk-note">Ничего не найдено.</p>`;
+    const total = hits.reduce((n, h) => n + h.holders.length, 0);
+    const books = new Set(hits.flatMap((h) => h.holders.map((x) => x.book))).size;
+    return `
+        <p class="stk-lore-stats">Найдено: ${entriesWord(total)}${hits.length !== total ? ` (разных текстов: ${hits.length})` : ""} · в ${inBooks(books)}</p>
+        <div class="stk-lore-list">${hits.slice(0, SEARCH_SHOW).map((h, i) => `
+            <details class="stk-lore-cmprow stk-lore-hit" data-hit="${i}">
+                <summary><span class="stk-lore-main">
+                    <span class="stk-lore-title">${h.memory ? "🧠 " : ""}${h.title ? marked(h.title, words) : "<i>без названия</i>"}</span>
+                    ${h.content ? `<span class="stk-lore-snippet">${marked(snippetOf(h.content, words), words)}</span>` : ""}
+                    <span class="stk-lore-where">${h.holders.map((x) => `<button class="stk-lore-linkbtn${x.disable ? " off" : ""}"
+                        data-open-book="${escAttr(x.book)}" data-uid="${x.uid}" title="${x.disable ? "Там запись выключена" : "Открыть запись"}">${escHtml(x.book)}${
+                        x.title !== h.title ? ` («${escHtml(x.title)}»)` : ""}${x.disable ? " · выкл." : ""}</button>`).join(", ")}</span>
+                </span></summary>
+                <div class="stk-lore-cmpbody"></div>
+            </details>`).join("")}</div>
+        ${hits.length > SEARCH_SHOW ? `<p class="stk-note">Показаны первые ${SEARCH_SHOW} — уточните запрос.</p>` : ""}`;
+}
+
+function renderResults() {
+    const box = modal()?.querySelector(".stk-lore-results");
+    if (box) box.innerHTML = resultsHtml();
+}
+
+/** A result opened: its whole text, words marked. */
+function fillHit(row) {
+    const body = row.querySelector(".stk-lore-cmpbody");
+    const h = hits[row.dataset.hit];
+    if (!h || body.dataset.filled) return;
+    body.dataset.filled = "1";
+    body.innerHTML = `<div class="stk-lore-cmptext">${marked(h.content, searchWords(state.query))}</div>`;
+}
+
 // ── UI ──
 
 function setStatus(text) {
@@ -1481,6 +1566,11 @@ function renderEntries() {
     const box = modal()?.querySelector(".stk-lore-entries");
     if (!box) return;
     state.stale = false;
+    if (state.searching) {
+        if (box.querySelector(".stk-lore-q")) renderResults();
+        else box.innerHTML = searchViewHtml();
+        return;
+    }
     if (!state.book || !state.data) {
         box.innerHTML = `<p class="stk-note">Выберите лорбук.</p>`;
         return;
@@ -1559,7 +1649,7 @@ function listHtml(entries, memory) {
 function render() {
     const m = modal();
     if (!m) return;
-    m.classList.toggle("has-book", !!state.book);
+    m.classList.toggle("has-book", !!state.book || state.searching);
     renderBooks();
     renderEntries();
 }
@@ -1599,7 +1689,10 @@ function bindModal(m) {
         const more = e.target.closest("[data-menu]");
         if (more) return more.dataset.menu === "folder" ? folderMenu(more, more.dataset.id) : bookMenu(more, more.dataset.id);
         const jump = e.target.closest("[data-open-book]");
-        if (jump) return openBook(jump.dataset.openBook, jump.dataset.uid);
+        if (jump) {
+            e.preventDefault(); // a link inside a <summary> must not fold the row
+            return openBook(jump.dataset.openBook, jump.dataset.uid);
+        }
         const full = e.target.closest("[data-diff-full]");
         if (full) return toggleDiffFull(full);
         const book = e.target.closest(".stk-lore-book");
@@ -1629,6 +1722,8 @@ function bindModal(m) {
             return renderEntries();
         }
         if (act === "new-folder") return newFolder();
+        if (act === "search") return openSearch();
+        if (act === "search-close") return closeSearch();
         if (act === "groups") return groupsPanel();
         if (act === "copies") { hideTip(); return copiesMenu(actEl, uid); }
         if (act === "versions") return versionsPanel(uid);
@@ -1705,7 +1800,8 @@ function bindModal(m) {
     });
     // "toggle" does not bubble: listen in the capture phase.
     m.addEventListener("toggle", (e) => {
-        if (e.target.matches?.(".stk-lore-cmprow") && e.target.open) fillCmpRow(e.target);
+        if (e.target.matches?.(".stk-lore-hit") && e.target.open) fillHit(e.target);
+        else if (e.target.matches?.(".stk-lore-cmprow") && e.target.open) fillCmpRow(e.target);
     }, true);
 
     m.addEventListener("pointerdown", (e) => {
@@ -1758,6 +1854,10 @@ function bindModal(m) {
             const label = e.target.closest(".stk-lore-entry").querySelector(".stk-lore-title");
             if (label) label.textContent = e.target.value || "без названия";
             queueTyping(uid, "comment", e.target.value);
+        } else if (e.target.classList.contains("stk-lore-q")) {
+            state.query = e.target.value;
+            clearTimeout(searchTimer);
+            searchTimer = setTimeout(renderResults, 250);
         } else if (e.target.classList.contains("stk-lore-filter")) {
             state.filter = e.target.value;
             renderBooks();
@@ -1800,6 +1900,7 @@ function openLorePopup() {
                     <input class="text_pole stk-lore-filter" type="search" autocomplete="off" placeholder="Найти лорбук…" value="${escAttr(state.filter)}">
                     <button class="menu_button sf-card-btn" data-act="new-folder" title="Новая папка">＋ Папка</button>
                 </div>
+                <button class="menu_button stk-lore-searchbtn" data-act="search">🔍 Поиск по записям</button>
                 <div class="stk-lore-books-list"></div>
             </div>
             <div class="stk-lore-entries"></div>

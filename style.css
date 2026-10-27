@@ -1498,3 +1498,24 @@
     .stk-lore-target input { width: 22px; height: 22px; margin-top: 0; }
     .stk-lore-conflict .stk-lore-chips, .stk-lore-conflicts-head .stk-lore-chips { flex-wrap: wrap; overflow: visible; }
 }
+
+/* Search across books */
+.stk-lore-searchbtn { margin: 0; flex-shrink: 0; }
+.stk-lore-search-x { margin-left: auto !important; flex-shrink: 0; }
+.stk-lore-q { margin: 4px 0 0; }
+.stk-lore-hit .stk-lore-main { gap: 3px; }
+.stk-lore-snippet { font-size: 0.85em; opacity: 0.8; line-height: 1.45; overflow-wrap: anywhere; }
+.stk-lore-mark {
+    background: rgba(225, 138, 36, 0.35);
+    background: color-mix(in srgb, var(--stk-lore-on) 40%, transparent);
+    color: inherit;
+    border-radius: 2px;
+    padding: 0 1px;
+}
+.stk-lore-linkbtn.off { opacity: 0.6; }
+
+@media (max-width: 768px) {
+    .stk-lore-search-x { display: none; }
+    .stk-lore-searchbtn { min-height: 44px; }
+    .stk-lore-hit .stk-lore-where .stk-lore-linkbtn { padding: 4px 0; }
+}
