@@ -1187,6 +1187,35 @@
 .stk-lore-gfoot { display: flex; gap: 6px; padding: 8px; }
 .stk-lore-gfoot .menu_button { flex: 1; margin: 0; }
 
+/* "Порядок": drag to set priorities */
+.stk-lore-sortbtn.active { border-color: var(--stk-lore-on); color: var(--stk-lore-on); }
+.stk-lore-sortrow { position: relative; display: flex; align-items: center; gap: 8px; padding: 4px 8px 4px 2px; min-height: 40px; }
+.stk-lore-sortrow .menu_button { margin: 0; }
+.stk-lore-sortrow .menu_button:disabled { opacity: 0.25; cursor: default; }
+.stk-lore-handle {
+    flex-shrink: 0;
+    padding: 6px 8px;
+    font-size: 1.15em;
+    opacity: 0.55;
+    cursor: grab;
+    touch-action: none; /* a finger on the handle drags instead of scrolling */
+    user-select: none;
+}
+.stk-lore-handle:hover { opacity: 1; }
+.stk-lore-sorting, .stk-lore-sorting * { user-select: none; cursor: grabbing !important; }
+.stk-lore-sortrow.dragging {
+    z-index: 3;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45), 0 0 0 1px var(--stk-lore-on);
+}
+.stk-lore-sortrow.drop-before::before, .stk-lore-sortlist.drop-end::after {
+    content: "";
+    display: block;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--stk-lore-on);
+}
+.stk-lore-sortrow.drop-before::before { position: absolute; left: 0; right: 0; top: -5px; }
+
 /* Phone: one pane at a time, the page itself scrolls (so the on-screen
    keyboard never hides the text being typed), header stays on top. */
 @media (max-width: 768px) {
@@ -1227,7 +1256,9 @@
     .stk-lore-modal input.text_pole { min-height: 40px; }
     .stk-lore-modal .sf-card-btn, .stk-lore-toolbar .menu_button { min-height: 40px; min-width: 40px; font-size: 1em; }
     .stk-lore-toolbar [data-act="add"] { flex: 1 1 100%; }
-    .stk-lore-toolbar [data-act="groups"] { flex: 0 0 auto; }
+    .stk-lore-toolbar [data-act="groups"], .stk-lore-toolbar [data-act="sort-mode"] { flex: 1 1 0; }
+    .stk-lore-handle { padding: 10px 12px; font-size: 1.3em; }
+    .stk-lore-sortrow { min-height: 52px; }
     .stk-lore-field-group { flex-basis: 100%; }
     .stk-lore-modal select { font-size: 16px; min-height: 40px; }
     .stk-lore-more { width: 44px; opacity: 0.7; }

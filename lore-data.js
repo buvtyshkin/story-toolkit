@@ -75,16 +75,47 @@ export function splitEntries(data) {
     return { regular, memories };
 }
 
-const byTitle = (a, b) => (a.comment || "").localeCompare(b.comment || "", "ru", { sensitivity: "base" });
+/**
+ * Does `b` come after `a` in the prompt? SillyTavern puts a higher priority
+ * (order) closer to the end; on equal priority it sorts by uid ascending and
+ * then unshifts every "before character" entry, so the higher uid ends up first.
+ */
+function promptAfter(a, b) {
+    const oa = a.order ?? 100;
+    const ob = b.order ?? 100;
+    return ob > oa || (ob === oa && b.uid < a.uid);
+}
 
 /**
- * Enabled entries first, then disabled; inside each, the order the entries take
- * in the prompt. SillyTavern puts a higher priority (order) closer to the end,
- * so ascending order reads top to bottom: 80 above 100.
+ * Enabled entries first, then disabled; inside each, the order the entries
+ * take in the prompt: 80 above 100.
  */
 export function sortEntries(entries) {
     return [...entries].sort((a, b) =>
-        !!a.disable - !!b.disable || (a.order ?? 100) - (b.order ?? 100) || byTitle(a, b) || a.uid - b.uid);
+        !!a.disable - !!b.disable || (a.order ?? 100) - (b.order ?? 100) || b.uid - a.uid);
+}
+
+/**
+ * Priority changes that move list[from] to position `to` of a prompt-ordered
+ * list (`to` counts in the list without the moved entry). The moved entry gets
+ * its new upper neighbour's priority + 1 (or the lower neighbour's − 1 at the
+ * top); entries below it that would no longer come after their upper neighbour
+ * are pushed down by the smallest step. Returns [{ uid, from, to }]; the
+ * entries in `list` are not modified.
+ */
+export function reorderPlan(list, from, to) {
+    const rest = list.filter((_, i) => i !== from).map((e) => ({ uid: e.uid, order: e.order ?? 100, was: e.order ?? 100 }));
+    const x = { uid: list[from].uid, order: list[from].order ?? 100, was: list[from].order ?? 100 };
+    rest.splice(to, 0, x);
+    const above = rest[to - 1];
+    const below = rest[to + 1];
+    const fits = (!above || promptAfter(above, x)) && (!below || promptAfter(x, below));
+    if (!fits) x.order = above ? above.order + 1 : Math.max(0, below.order - 1);
+    for (let j = to + 1; j < rest.length && !promptAfter(rest[j - 1], rest[j]); j++) {
+        const prev = rest[j - 1];
+        rest[j].order = rest[j].uid < prev.uid ? prev.order : prev.order + 1;
+    }
+    return rest.filter((e) => e.order !== e.was).map((e) => ({ uid: e.uid, from: e.was, to: e.order }));
 }
 
 // ── Folders (for lorebooks) ──

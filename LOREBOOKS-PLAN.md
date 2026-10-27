@@ -43,3 +43,5 @@ are near-duplicates of each other (e.g. "Семья" exists in 38 books).
 - [ ] 4. Copy/move to one or several books, bulk on/off, priority, delete,
       group; conflict prompt on same title.
 - [ ] 5. Search across all books.
+- [x] Extra (asked after step 2): "Порядок" mode — drag entries (or arrows) to set
+      priorities in prompt order; entry <-> Memory Books memory (the stmemorybooks flag).

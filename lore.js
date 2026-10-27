@@ -21,7 +21,7 @@ import { addWandMenuItem, escHtml, uid as newId } from "./utils.js";
 import {
     STANDARD, isMemoryEntry, deviations, applyPatch, newEntryFields, splitEntries, sortEntries, preview,
     childFolders, folderOf, folderPath, flatFolders, deleteFolder, countBooks,
-    GROUP_FIELD, groupEntries, moveGroup,
+    GROUP_FIELD, groupEntries, moveGroup, reorderPlan,
 } from "./lore-data.js";
 
 const TAG = "[STK Lore]";
@@ -34,7 +34,9 @@ const state = {
     data: null,      // our own copy of its data (never the cached object)
     openUid: null,   // entry expanded for editing
     filter: "",
-    stale: false,    // an outside save arrived while the user was typing
+    stale: false,    // an outside save arrived while the user was typing or dragging
+    sortMode: false, // "Порядок": drag entries to set priorities
+    dragging: false,
 };
 
 // uid -> { patch, timer } — text typed but not saved yet
@@ -196,6 +198,7 @@ async function openBook(name) {
     state.data = data; // loadWorldInfo hands out a clone already
     state.openUid = null;
     state.stale = false;
+    state.sortMode = false;
     settings().lastBook = name;
     saveSettings();
     render();
@@ -312,6 +315,132 @@ function groupsPanel() {
         await rerenderKeepOpen();
     });
     modal().appendChild(panel);
+}
+
+/** Turn a regular entry into a Memory Books memory or back; only the flag changes. */
+async function setMemory(uid, memory) {
+    if (memory) settings().memoriesOpen = true;
+    // Memory Books recognises a memory by `stmemorybooks === true` alone.
+    await savePatch(uid, { stmemorybooks: memory ? true : undefined });
+    await rerenderKeepOpen();
+    toastr.success(memory ? "Запись перенесена в воспоминания Memory Books." : "Воспоминание стало обычной записью.", "Лорбуки");
+}
+
+// ── "Порядок": priorities by dragging ──
+
+/** What the sort mode shows: every enabled entry, memories too, in prompt order. */
+function sortList() {
+    return sortEntries(Object.values(state.data?.entries || {}).filter((e) => !e.disable));
+}
+
+function plural(n, one, few, many) {
+    const m10 = n % 10, m100 = n % 100;
+    if (m10 === 1 && m100 !== 11) return one;
+    if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
+    return many;
+}
+
+async function reorder(from, to) {
+    const list = sortList();
+    const moved = list[from];
+    const plan = reorderPlan(list, from, to);
+    if (!moved || !plan.length) return renderEntries();
+    const ok = await mutateBook(state.book, (data) => {
+        for (const c of plan) applyPatch(data, c.uid, { order: c.to }, mirror);
+        return true;
+    });
+    renderEntries();
+    if (ok === false) return;
+    const own = plan.find((c) => c.uid === moved.uid);
+    const others = plan.length - (own ? 1 : 0);
+    toastr.info(
+        (own ? `«${moved.comment || "без названия"}»: ${own.from} → ${own.to}` : "Порядок обновлён") +
+        (others ? `. Ещё ${others} ${plural(others, "запись сдвинута", "записи сдвинуты", "записей сдвинуто")} ниже.` : ""),
+        "Лорбуки", { timeOut: 4000 });
+}
+
+/** Drag a row by its ☰ handle (mouse and touch alike). */
+function startDrag(handle, e) {
+    const row = handle.closest(".stk-lore-sortrow");
+    const listEl = row?.parentElement;
+    if (!listEl) return;
+    const rows = [...listEl.querySelectorAll(".stk-lore-sortrow")];
+    const from = rows.indexOf(row);
+    const others = rows.filter((r) => r !== row);
+    const scroller = isPhone() ? document.getElementById(OVERLAY_ID) : modal().querySelector(".stk-lore-entries");
+    const startY = e.clientY;
+    const startScroll = scroller.scrollTop;
+    let lastY = e.clientY;
+    let to = from;
+    let raf = 0;
+
+    state.dragging = true;
+    try {
+        handle.setPointerCapture(e.pointerId); // keep getting moves outside the handle
+    } catch { /* an unknown pointer: moves over the handle still work */ }
+    row.classList.add("dragging");
+    modal().classList.add("stk-lore-sorting");
+
+    const update = () => {
+        row.style.transform = `translateY(${lastY - startY + scroller.scrollTop - startScroll}px)`;
+        to = others.filter((r) => {
+            const b = r.getBoundingClientRect();
+            return b.top + b.height / 2 < lastY;
+        }).length;
+        others.forEach((r, i) => r.classList.toggle("drop-before", i === to && to !== from));
+        listEl.classList.toggle("drop-end", to === others.length && to !== from);
+    };
+    // Near the top or bottom edge the list scrolls by itself.
+    const autoScroll = () => {
+        const box = scroller.getBoundingClientRect();
+        const top = Math.max(box.top, 0) + (isPhone() ? 90 : 40);
+        const bottom = Math.min(box.bottom, window.innerHeight) - 40;
+        if (lastY < top) scroller.scrollTop -= 14;
+        else if (lastY > bottom) scroller.scrollTop += 14;
+        update();
+        raf = requestAnimationFrame(autoScroll);
+    };
+    const move = (ev) => {
+        lastY = ev.clientY;
+        update();
+    };
+    const end = (ev) => {
+        cancelAnimationFrame(raf);
+        handle.removeEventListener("pointermove", move);
+        handle.removeEventListener("pointerup", end);
+        handle.removeEventListener("pointercancel", end);
+        state.dragging = false;
+        modal()?.classList.remove("stk-lore-sorting");
+        if (ev.type === "pointerup" && to !== from) reorder(from, to);
+        else renderEntries();
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", end);
+    handle.addEventListener("pointercancel", end);
+    raf = requestAnimationFrame(autoScroll);
+}
+
+function sortModeHtml() {
+    const groups = new Map(settings().groups.map((g) => [g.id, g.name]));
+    const list = sortList();
+    return `
+        <p class="stk-note">Перетащите запись за ☰ (или стрелками) — приоритет пересчитается сам. Порядок — как в промпте, воспоминания тоже здесь.
+            Выключенные записи в промпт не идут и здесь не показаны.</p>
+        <div class="stk-lore-list stk-lore-sortlist">${list.map((e, i) => {
+            const memory = isMemoryEntry(e);
+            const sub = memory ? "воспоминание" : (groups.get(e[GROUP_FIELD]) || "");
+            return `
+            <div class="stk-lore-entry stk-lore-sortrow" data-uid="${e.uid}" data-idx="${i}">
+                <span class="stk-lore-handle" title="Перетащить">☰</span>
+                <div class="stk-lore-main">
+                    <div class="stk-lore-title">${memory ? "🧠 " : ""}${escHtml(e.comment || "без названия")}</div>
+                    ${sub ? `<div class="stk-lore-preview">${escHtml(sub)}</div>` : ""}
+                </div>
+                <span class="stk-lore-prio" title="Приоритет">${e.order ?? 100}</span>
+                <button class="menu_button sf-card-btn" data-act="move-up" title="Выше" ${i ? "" : "disabled"}>↑</button>
+                <button class="menu_button sf-card-btn" data-act="move-down" title="Ниже" ${i < list.length - 1 ? "" : "disabled"}>↓</button>
+            </div>`;
+        }).join("") || `<p class="stk-note">Включённых записей нет.</p>`}</div>`;
 }
 
 async function makeStandard(uid) {
@@ -532,6 +661,9 @@ function entryHtml(e, memory = false) {
                 <button class="menu_button sf-card-btn" data-act="standard">Привести к стандарту</button></div>` : ""}
             <div class="stk-lore-edit-foot">
                 <span class="stk-lore-chars">${(e.content || "").length} симв.</span>
+                ${memory
+                    ? `<button class="menu_button sf-card-btn" data-act="to-regular" title="Убрать из воспоминаний Memory Books">↩ В обычные записи</button>`
+                    : `<button class="menu_button sf-card-btn" data-act="to-memory" title="Сделать воспоминанием Memory Books">🧠 В воспоминания</button>`}
                 <button class="menu_button sf-card-btn" data-act="delete">🗑 Удалить</button>
                 <button class="menu_button sf-card-btn" data-act="toggle-open">Свернуть</button>
             </div>
@@ -558,17 +690,20 @@ function renderEntries() {
             <h4 class="stk-lore-bookname">${escHtml(state.book)}</h4>
         </div>
         <div class="stk-lore-toolbar">
+            ${state.sortMode ? "" : `
             <button class="menu_button" data-act="add">＋ Новая запись</button>
-            <button class="menu_button" data-act="groups">🗂 Группы</button>
+            <button class="menu_button" data-act="groups">🗂 Группы</button>`}
+            <button class="menu_button stk-lore-sortbtn${state.sortMode ? " active" : ""}" data-act="sort-mode">${state.sortMode ? "✓ Готово" : "↕ Порядок"}</button>
             <span class="stk-lore-stats">${regular.length} записей${off ? ` · выкл. ${off}` : ""}${odd ? ` · ⚠ ${odd}` : ""}</span>
         </div>
+        ${state.sortMode ? sortModeHtml() : `
         <p class="stk-note">Сверху включённые, ниже выключенные; внутри — по приоритету: меньшее число выше, как в промпте.</p>
         ${(settings().groups.length ? groupedHtml(regular) : listHtml(regular, false)) || `<p class="stk-note">Записей нет.</p>`}
         ${memories.length ? `
         <details class="stk-lore-memories" ${settings().memoriesOpen === false ? "" : "open"}>
             <summary>🧠 Воспоминания Memory Books (${memories.length}${memOff ? ` · выкл. ${memOff}` : ""})</summary>
             ${listHtml(memories, true)}
-        </details>` : ""}`;
+        </details>` : ""}`}`;
 
     box.querySelector(".stk-lore-memories")?.addEventListener("toggle", (e) => {
         settings().memoriesOpen = e.target.open;
@@ -668,6 +803,17 @@ function bindModal(m) {
         }
         if (act === "new-folder") return newFolder();
         if (act === "groups") return groupsPanel();
+        if (act === "sort-mode") {
+            await flushAll();
+            state.sortMode = !state.sortMode;
+            state.openUid = null;
+            return renderEntries();
+        }
+        if (act === "move-up" || act === "move-down") {
+            const i = Number(actEl.closest(".stk-lore-sortrow").dataset.idx);
+            return reorder(i, act === "move-up" ? i - 1 : i + 1);
+        }
+        if (act === "to-memory" || act === "to-regular") return setMemory(uid, act === "to-memory");
         if (act === "back") {
             await flushAll();
             state.book = null;
@@ -697,6 +843,13 @@ function bindModal(m) {
         } else if (e.target.classList.contains("stk-lore-group-select")) {
             setEntryGroup(uid, e.target);
         }
+    });
+
+    m.addEventListener("pointerdown", (e) => {
+        const handle = e.target.closest(".stk-lore-handle");
+        if (!handle || (e.pointerType === "mouse" && e.button !== 0)) return;
+        e.preventDefault(); // no text selection, no page scroll while dragging
+        startDrag(handle, e);
     });
 
     // Desktop: drag a lorebook onto a folder. (Touch screens use the ⋯ menu.)
@@ -813,7 +966,7 @@ function onWorldInfoUpdated(name, data) {
     if (ownSave || name !== state.book || !modal() || !data?.entries) return;
     state.data = structuredClone(data);
     const typing = document.activeElement?.closest?.(`#${OVERLAY_ID} .stk-lore-edit`);
-    if (typing || pending.size) state.stale = true;
+    if (typing || pending.size || state.dragging) state.stale = true;
     else renderEntries();
 }
 

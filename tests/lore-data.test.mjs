@@ -5,7 +5,7 @@ import {
     STANDARD, isMemoryEntry, deviations, applyPatch, newEntryFields,
     splitEntries, sortEntries, preview,
     childFolders, folderOf, folderPath, flatFolders, deleteFolder, countBooks,
-    GROUP_FIELD, groupEntries, moveGroup,
+    GROUP_FIELD, groupEntries, moveGroup, reorderPlan,
 } from "../lore-data.js";
 
 const standard = (extra = {}) => ({ uid: 0, comment: "x", content: "y", order: 100, disable: false, ...STANDARD, ...extra });
@@ -57,16 +57,66 @@ test("splitEntries separates Memory Books memories", () => {
     assert.equal(isMemoryEntry(memories[0]), true);
 });
 
-test("sort: enabled first, then lower priority first, ties by title", () => {
+test("sort: enabled first, then prompt order (priority up, equal priority: higher uid first)", () => {
     const list = [
-        standard({ uid: 0, order: 101, comment: "в" }),
-        standard({ uid: 1, order: 99, comment: "б" }),
-        standard({ uid: 2, order: 100, comment: "Б" }),
-        standard({ uid: 3, order: 100, comment: "а" }),
-        standard({ uid: 4, order: 80, comment: "г", disable: true }),
-        standard({ uid: 5, order: 120, comment: "д", disable: true }),
+        standard({ uid: 0, order: 101 }),
+        standard({ uid: 1, order: 99 }),
+        standard({ uid: 2, order: 100 }),
+        standard({ uid: 3, order: 100 }),
+        standard({ uid: 4, order: 80, disable: true }),
+        standard({ uid: 5, order: 120, disable: true }),
     ];
     assert.deepEqual(sortEntries(list).map((e) => e.uid), [1, 3, 2, 0, 4, 5]);
+});
+
+// Apply a plan and re-sort, to check the entry really lands where it was dropped.
+function applyPlan(list, plan) {
+    const byUid = new Map(list.map((e) => [e.uid, { ...e }]));
+    for (const c of plan) byUid.get(c.uid).order = c.to;
+    return sortEntries([...byUid.values()]);
+}
+
+function expectMove(list, from, to) {
+    const sorted = sortEntries(list);
+    const plan = reorderPlan(sorted, from, to);
+    const want = sorted.filter((_, i) => i !== from);
+    want.splice(to, 0, sorted[from]);
+    assert.deepEqual(applyPlan(sorted, plan).map((e) => e.uid), want.map((e) => e.uid));
+    return plan;
+}
+
+test("reorder: the user's example — 80 dropped below 100 becomes 101, nothing else moves", () => {
+    const list = [standard({ uid: 1, order: 80 }), standard({ uid: 2, order: 100 }), standard({ uid: 3, order: 120 })];
+    const plan = expectMove(list, 0, 1);
+    assert.deepEqual(plan, [{ uid: 1, from: 80, to: 101 }]);
+});
+
+test("reorder: a gap is used, the top gets the neighbour − 1, a valid spot changes nothing", () => {
+    const list = [standard({ uid: 1, order: 90 }), standard({ uid: 2, order: 100 }), standard({ uid: 3, order: 110 })];
+    assert.deepEqual(expectMove(list, 2, 1), [{ uid: 3, from: 110, to: 91 }]);
+    assert.deepEqual(expectMove(list, 2, 0), [{ uid: 3, from: 110, to: 89 }]);
+    assert.deepEqual(reorderPlan(sortEntries(list), 1, 1), []);
+});
+
+test("reorder: dropping into a block of equal priorities pushes the rest down", () => {
+    const list = [
+        standard({ uid: 10, order: 80 }),
+        standard({ uid: 9, order: 100 }), standard({ uid: 8, order: 100 }), standard({ uid: 7, order: 100 }),
+        standard({ uid: 6, order: 101 }), standard({ uid: 5, order: 130 }),
+    ];
+    // sorted: 10(80) 9 8 7 (100) 6(101) 5(130); drop 10 between 9 and 8
+    const plan = expectMove(list, 0, 1);
+    const to = Object.fromEntries(plan.map((c) => [c.uid, c.to]));
+    assert.equal(to[10], 101);
+    assert.equal(to[5], undefined); // the 130 is far enough, untouched
+    for (const c of plan) assert.ok(c.to >= c.from || c.uid === 10);
+});
+
+test("reorder: every move in a messy list lands exactly", () => {
+    const list = [80, 100, 100, 100, 101, 101, 0, 0, 5, 100].map((order, uid) => standard({ uid, order }));
+    for (let from = 0; from < list.length; from++) {
+        for (let to = 0; to < list.length; to++) expectMove(list, from, to);
+    }
 });
 
 test("folders: children, path, flat list, counts", () => {
@@ -105,7 +155,7 @@ test("groupEntries follows the group order, ungrouped last, empty groups skipped
     const out = groupEntries(list, groups);
     assert.deepEqual(out.map((s) => s.group?.id ?? null), ["g1", "g3", null]);
     assert.deepEqual(out[0].entries.map((e) => e.uid), [3, 2]);
-    assert.deepEqual(out[2].entries.map((e) => e.uid), [1, 4]);
+    assert.deepEqual(out[2].entries.map((e) => e.uid), [4, 1]); // equal priority: higher uid first
     assert.equal(GROUP_FIELD, "stk_group");
 });
 
