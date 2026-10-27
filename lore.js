@@ -15,7 +15,7 @@
 import { getContext, getPopupClass, toolkitSettings, saveSettings, eventSource, event_types, worldInfo } from "./st.js";
 import { addWandMenuItem, escHtml } from "./utils.js";
 import {
-    STANDARD, deviations, applyPatch, newEntryFields, splitEntries, sortEntries, preview,
+    STANDARD, isMemoryEntry, deviations, applyPatch, newEntryFields, splitEntries, sortEntries, preview,
 } from "./lore-data.js";
 
 const TAG = "[STK Lore]";
@@ -38,7 +38,7 @@ let ownSave = false;
 
 function settings() {
     const t = toolkitSettings();
-    if (!t.lore) t.lore = { lastBook: null, sort: "prompt" };
+    if (!t.lore) t.lore = { lastBook: null, memoriesOpen: true };
     return t.lore;
 }
 
@@ -187,10 +187,13 @@ async function addEntry() {
 async function deleteEntry(uid) {
     const entry = state.data.entries[uid];
     const label = entry?.comment || preview(entry?.content) || `#${uid}`;
+    const memory = isMemoryEntry(entry)
+        ? " Это воспоминание Memory Books."
+        : "";
     const popup = getPopupClass();
     const yes = popup
-        ? await popup.Popup.show.confirm("Удалить запись?", `«${escHtml(label)}» будет удалена из лорбука «${escHtml(state.book)}». Это необратимо.`)
-        : window.confirm(`Удалить «${label}»? Это необратимо.`);
+        ? await popup.Popup.show.confirm("Удалить запись?", `«${escHtml(label)}» будет удалена из лорбука «${escHtml(state.book)}». Это необратимо.${memory}`)
+        : window.confirm(`Удалить «${label}»? Это необратимо.${memory}`);
     if (!yes) return;
     clearTimeout(pending.get(uid)?.timer);
     pending.delete(uid);
@@ -233,13 +236,14 @@ function renderBooks() {
         : `<p class="stk-note">Ничего не найдено</p>`;
 }
 
-function entryHtml(e) {
-    const dev = deviations(e);
+/** Memories are edited like any entry; their settings belong to Memory Books, so no ⚠ for them. */
+function entryHtml(e, memory = false) {
+    const dev = memory ? [] : deviations(e);
     const open = String(e.uid) === String(state.openUid);
     const title = e.comment || "";
     const head = `
         <div class="stk-lore-row" data-act="toggle-open">
-            <input type="checkbox" class="stk-lore-on" title="Включена" ${e.disable ? "" : "checked"}>
+            <input type="checkbox" class="stk-lore-on" title="${e.disable ? "Выключена — включить" : "Включена — выключить"}" ${e.disable ? "" : "checked"}>
             <div class="stk-lore-main">
                 <div class="stk-lore-title">${title ? escHtml(title) : `<i>без названия</i>`}</div>
                 ${open ? "" : `<div class="stk-lore-preview">${escHtml(preview(e.content))}</div>`}
@@ -281,9 +285,9 @@ function renderEntries() {
         return;
     }
     const { regular, memories } = splitEntries(state.data);
-    const sort = settings().sort;
     const off = regular.filter((e) => e.disable).length;
     const odd = regular.filter((e) => deviations(e).length).length;
+    const memOff = memories.filter((e) => e.disable).length;
 
     box.innerHTML = `
         <div class="stk-lore-bookhead">
@@ -292,25 +296,30 @@ function renderEntries() {
         </div>
         <div class="stk-lore-toolbar">
             <button class="menu_button" data-act="add">＋ Новая запись</button>
-            <select class="stk-lore-sort">
-                <option value="prompt" ${sort === "prompt" ? "selected" : ""}>Порядок промпта</option>
-                <option value="title" ${sort === "title" ? "selected" : ""}>По названию</option>
-            </select>
             <span class="stk-lore-stats">${regular.length} записей${off ? ` · выкл. ${off}` : ""}${odd ? ` · ⚠ ${odd}` : ""}</span>
         </div>
-        ${sort === "prompt" ? `<p class="stk-note">Сверху — то, что раньше в промпте: меньший приоритет идёт первым.</p>` : ""}
-        <div class="stk-lore-list">${sortEntries(regular, sort).map(entryHtml).join("") || `<p class="stk-note">Записей нет.</p>`}</div>
+        <p class="stk-note">Сверху включённые, ниже выключенные; внутри — по приоритету: меньшее число выше, как в промпте.</p>
+        ${listHtml(regular, false) || `<p class="stk-note">Записей нет.</p>`}
         ${memories.length ? `
-        <details class="stk-lore-memories">
-            <summary>🧠 Воспоминания Memory Books (${memories.length}) — только просмотр</summary>
-            ${sortEntries(memories, "title").map((m) => `
-                <details class="stk-lore-memory">
-                    <summary>${escHtml(m.comment || preview(m.content))}</summary>
-                    <div class="sf-card-text">${escHtml(m.content || "")}</div>
-                </details>`).join("")}
+        <details class="stk-lore-memories" ${settings().memoriesOpen === false ? "" : "open"}>
+            <summary>🧠 Воспоминания Memory Books (${memories.length}${memOff ? ` · выкл. ${memOff}` : ""})</summary>
+            ${listHtml(memories, true)}
         </details>` : ""}`;
 
+    box.querySelector(".stk-lore-memories")?.addEventListener("toggle", (e) => {
+        settings().memoriesOpen = e.target.open;
+        saveSettings();
+    });
     box.querySelectorAll(".stk-lore-text").forEach(autosize);
+}
+
+/** Sorted entries, with a divider before the disabled ones. */
+function listHtml(entries, memory) {
+    const sorted = sortEntries(entries);
+    const firstOff = sorted.findIndex((e) => e.disable);
+    const html = sorted.map((e, i) =>
+        (i === firstOff ? `<div class="stk-lore-divider">Выключены · ${sorted.length - firstOff}</div>` : "") + entryHtml(e, memory));
+    return html.length ? `<div class="stk-lore-list">${html.join("")}</div>` : "";
 }
 
 function render() {
@@ -366,17 +375,14 @@ function bindModal(m) {
         if (e.target.classList.contains("stk-lore-on")) {
             const disable = !e.target.checked;
             e.target.closest(".stk-lore-entry").classList.toggle("off", disable);
-            savePatch(uid, { disable });
+            // Re-sort: the entry moves between the enabled and the disabled part.
+            savePatch(uid, { disable }).then(flushAll).then(renderEntries);
         } else if (e.target.classList.contains("stk-lore-prio-input")) {
             const order = Number(e.target.value);
             if (!Number.isFinite(order)) return;
             const label = e.target.closest(".stk-lore-entry").querySelector(".stk-lore-prio");
             if (label) label.textContent = order;
-            savePatch(uid, { order });
-        } else if (e.target.classList.contains("stk-lore-sort")) {
-            settings().sort = e.target.value;
-            saveSettings();
-            renderEntries();
+            savePatch(uid, { order }); // re-sorted when the entry is collapsed
         }
     });
 

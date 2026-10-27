@@ -78,14 +78,13 @@ export function splitEntries(data) {
 const byTitle = (a, b) => (a.comment || "").localeCompare(b.comment || "", "ru", { sensitivity: "base" });
 
 /**
- * "prompt": the order the entries take in the prompt. SillyTavern puts a higher
- * priority (order) closer to the end, so ascending order reads top to bottom.
- * "title": alphabetical.
+ * Enabled entries first, then disabled; inside each, the order the entries take
+ * in the prompt. SillyTavern puts a higher priority (order) closer to the end,
+ * so ascending order reads top to bottom: 80 above 100.
  */
-export function sortEntries(entries, mode = "prompt") {
-    const list = [...entries];
-    if (mode === "title") return list.sort((a, b) => byTitle(a, b) || a.uid - b.uid);
-    return list.sort((a, b) => (a.order ?? 100) - (b.order ?? 100) || byTitle(a, b) || a.uid - b.uid);
+export function sortEntries(entries) {
+    return [...entries].sort((a, b) =>
+        !!a.disable - !!b.disable || (a.order ?? 100) - (b.order ?? 100) || byTitle(a, b) || a.uid - b.uid);
 }
 
 /** First non-empty line of the text, shortened. */

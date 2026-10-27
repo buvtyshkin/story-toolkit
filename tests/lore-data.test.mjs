@@ -55,15 +55,16 @@ test("splitEntries separates Memory Books memories", () => {
     assert.equal(isMemoryEntry(memories[0]), true);
 });
 
-test("prompt order: lower priority first, ties by title", () => {
+test("sort: enabled first, then lower priority first, ties by title", () => {
     const list = [
         standard({ uid: 0, order: 101, comment: "в" }),
         standard({ uid: 1, order: 99, comment: "б" }),
         standard({ uid: 2, order: 100, comment: "Б" }),
         standard({ uid: 3, order: 100, comment: "а" }),
+        standard({ uid: 4, order: 80, comment: "г", disable: true }),
+        standard({ uid: 5, order: 120, comment: "д", disable: true }),
     ];
-    assert.deepEqual(sortEntries(list).map((e) => e.uid), [1, 3, 2, 0]);
-    assert.deepEqual(sortEntries(list, "title").map((e) => e.uid), [3, 1, 2, 0]);
+    assert.deepEqual(sortEntries(list).map((e) => e.uid), [1, 3, 2, 0, 4, 5]);
 });
 
 test("preview takes the first non-empty line", () => {

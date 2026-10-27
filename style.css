@@ -930,6 +930,8 @@
 
 /* Desktop: two panes that scroll on their own, the window itself stays put. */
 .stk-lore-modal {
+    /* The theme's accent marks what is switched on. */
+    --stk-lore-on: var(--interactable-outline-color, var(--SmartThemeQuoteColor, #e18a24));
     max-width: 1100px;
     height: min(920px, calc(100dvh - 24px));
     display: flex;
@@ -962,10 +964,7 @@
     word-break: break-word;
 }
 .stk-lore-book:hover { background: rgba(128, 128, 128, 0.12); }
-.stk-lore-book.active {
-    border-color: var(--interactable-outline-color, var(--SmartThemeQuoteColor, #e18a24));
-    background: rgba(128, 128, 128, 0.14);
-}
+.stk-lore-book.active { border-color: var(--stk-lore-on); background: rgba(128, 128, 128, 0.14); }
 
 .stk-lore-entries { padding-right: 4px; }
 .stk-lore-bookhead { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
@@ -973,17 +972,35 @@
 .stk-lore-back { display: none; flex-shrink: 0; }
 .stk-lore-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .stk-lore-toolbar .menu_button { margin: 0; white-space: nowrap; }
-.stk-lore-sort { width: auto; margin: 0; }
 .stk-lore-stats { font-size: 0.85em; opacity: 0.65; }
-.stk-lore-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.stk-lore-list { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
+.stk-lore-divider {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 10px 0 2px;
+    font-size: 0.8em;
+    opacity: 0.6;
+}
+.stk-lore-divider::after { content: ""; flex: 1; border-top: 1px dashed var(--SmartThemeBorderColor, #555); }
 
+/* Enabled: accent outline and a bar on the left. Disabled: dashed, faded. */
 .stk-lore-entry {
-    border: 1px solid var(--SmartThemeBorderColor, #555);
+    border: 1px solid var(--stk-lore-on);
+    border: 1px solid color-mix(in srgb, var(--stk-lore-on) 45%, transparent);
+    border-left: 4px solid var(--stk-lore-on);
     border-radius: 8px;
     background: var(--SmartThemeBlurTintColor, rgba(0, 0, 0, 0.2));
+    background: color-mix(in srgb, var(--stk-lore-on) 7%, var(--SmartThemeBlurTintColor, #1a1a1a));
 }
-.stk-lore-entry.off .stk-lore-main { opacity: 0.45; }
-.stk-lore-entry.open { border-color: var(--interactable-outline-color, var(--SmartThemeQuoteColor, #e18a24)); }
+.stk-lore-entry.off {
+    border: 1px dashed var(--SmartThemeBorderColor, #555);
+    border-left: 4px dashed var(--SmartThemeBorderColor, #555);
+    background: transparent;
+}
+.stk-lore-entry.off .stk-lore-main, .stk-lore-entry.off .stk-lore-prio { opacity: 0.5; }
+.stk-lore-entry.open { box-shadow: 0 0 0 1px var(--stk-lore-on); }
+.stk-lore-entry.off.open { box-shadow: 0 0 0 1px var(--SmartThemeBorderColor, #555); }
 .stk-lore-row {
     display: flex;
     align-items: center;
@@ -992,7 +1009,36 @@
     min-height: 40px;
     cursor: pointer;
 }
-.stk-lore-on { width: 18px; height: 18px; margin: 0; flex-shrink: 0; cursor: pointer; }
+
+/* On/off switch */
+.stk-lore-on {
+    appearance: none;
+    -webkit-appearance: none;
+    position: relative;
+    flex-shrink: 0;
+    width: 34px;
+    height: 20px;
+    margin: 0;
+    border-radius: 10px;
+    background: rgba(128, 128, 128, 0.4);
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.stk-lore-on::before {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--SmartThemeBodyColor, #ddd);
+    transition: transform 0.15s;
+}
+.stk-lore-on:checked { background: var(--stk-lore-on); }
+.stk-lore-on:checked::before { transform: translateX(14px); background: var(--SmartThemeBlurTintColor, #1a1a1a); }
+.stk-lore-on:focus-visible { outline: 2px solid var(--stk-lore-on); outline-offset: 2px; }
+
 .stk-lore-main { flex: 1; min-width: 0; }
 .stk-lore-title { font-weight: 600; word-break: break-word; }
 .stk-lore-preview {
@@ -1006,7 +1052,6 @@
 .stk-lore-prio {
     font-size: 0.8em;
     font-variant-numeric: tabular-nums;
-    opacity: 0.7;
     border: 1px solid var(--SmartThemeBorderColor, #555);
     border-radius: 10px;
     padding: 1px 7px;
@@ -1035,11 +1080,13 @@
 .stk-lore-edit-foot .menu_button { margin: 0; }
 .stk-lore-chars { margin-right: auto; font-size: 0.8em; opacity: 0.55; }
 
-.stk-lore-memories { margin-top: 14px; }
-.stk-lore-memories > summary, .stk-lore-memory > summary { cursor: pointer; padding: 6px 0; }
-.stk-lore-memories > summary { opacity: 0.75; }
-.stk-lore-memory { margin-left: 14px; font-size: 0.92em; }
-.stk-lore-memory .sf-card-text { opacity: 0.85; margin: 2px 0 8px 0; }
+.stk-lore-memories { margin-top: 16px; }
+.stk-lore-memories > summary {
+    cursor: pointer;
+    padding: 6px 0;
+    font-weight: 600;
+    border-top: 1px solid var(--SmartThemeBorderColor, #555);
+}
 
 /* Phone: one pane at a time, the page itself scrolls (so the on-screen
    keyboard never hides the text being typed), header stays on top. */
@@ -1048,6 +1095,9 @@
     .stk-lore-modal {
         height: auto;
         min-height: 100%;
+        /* Not stretched to the overlay's height: the modal must grow with its
+           content, or the sticky header unsticks one screen down. */
+        align-self: flex-start;
         overflow: visible;
         border-radius: 0;
         border: none;
@@ -1069,12 +1119,13 @@
     .stk-lore-back { display: inline-flex; }
     .stk-lore-book { padding: 11px 10px; font-size: 1em; }
     .stk-lore-row { min-height: 52px; padding: 6px 10px; }
-    .stk-lore-on { width: 24px; height: 24px; }
+    .stk-lore-on { width: 44px; height: 26px; border-radius: 13px; }
+    .stk-lore-on::before { width: 22px; height: 22px; }
+    .stk-lore-on:checked::before { transform: translateX(18px); }
     .stk-lore-fields { flex-wrap: wrap; }
     .stk-lore-field-title { flex-basis: 100%; }
-    .stk-lore-modal input, .stk-lore-modal textarea, .stk-lore-modal select { font-size: 16px; } /* prevent iOS auto-zoom */
+    .stk-lore-modal input, .stk-lore-modal textarea { font-size: 16px; } /* prevent iOS auto-zoom */
+    .stk-lore-modal input.text_pole { min-height: 40px; }
     .stk-lore-modal .sf-card-btn, .stk-lore-toolbar .menu_button { min-height: 40px; min-width: 40px; font-size: 1em; }
     .stk-lore-toolbar .menu_button { flex: 1 1 100%; }
-    .stk-lore-sort { flex: 1; min-height: 40px; }
-    .stk-lore-modal input.text_pole { min-height: 40px; }
 }
