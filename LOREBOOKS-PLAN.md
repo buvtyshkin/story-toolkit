@@ -40,8 +40,12 @@ are near-duplicates of each other (e.g. "Семья" exists in 38 books).
 - [x] 2. Structure: folders for books; groups for entries.
 - [x] 3. Duplicates: hover shows the books with an identical entry; a mark for
       "same title, different text" with a diff view; two-book comparison.
-- [ ] 4. Copy/move to one or several books, bulk on/off, priority, delete,
+- [x] 4. Copy/move to one or several books, bulk on/off, priority, delete,
       group; conflict prompt on same title.
 - [ ] 5. Search across all books.
 - [x] Extra (asked after step 2): "Порядок" mode — drag entries (or arrows) to set
       priorities in prompt order; entry <-> Memory Books memory (the stmemorybooks flag).
+- [x] Extra (asked with step 4): system folder "Архив" — archived books stay usable in
+      SillyTavern but are left out of the book search, duplicates, comparisons and
+      copy targets. Bulk actions back the book up first into the user's files
+      (lorebook-backup_<name>_<time>.json, last 40 kept).

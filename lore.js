@@ -14,6 +14,10 @@
 //  Порядок: лорбуки разложены по папкам (хранятся в настройках
 //  расширения), записи — по группам (общий список групп; id группы
 //  лежит в самой записи, поле stk_group).
+//
+//  Архив — системная папка: лорбуки в нём не участвуют в поиске
+//  дублей, сравнениях и копировании. Перед массовыми действиями
+//  лорбук сохраняется в файлы пользователя (lorebook-backup_…).
 // ============================================================
 
 import { getContext, getPopupClass, toolkitSettings, saveSettings, eventSource, event_types, worldInfo } from "./st.js";
@@ -23,6 +27,7 @@ import {
     childFolders, folderOf, folderPath, flatFolders, deleteFolder, countBooks,
     GROUP_FIELD, groupEntries, moveGroup, reorderPlan,
     buildIndex, copiesOf, versionsOf, compareBooks, diffText,
+    placeCopy, parsePriority, backupFileName,
 } from "./lore-data.js";
 
 const TAG = "[STK Lore]";
@@ -39,6 +44,7 @@ const state = {
     sortMode: false, // "Порядок": drag entries to set priorities
     dragging: false,
     compare: null,   // the other book of a two-book comparison
+    select: null,    // Set of picked uids while choosing entries for bulk actions
 };
 
 // uid -> { patch, timer } — text typed but not saved yet
@@ -54,6 +60,9 @@ const LORE_DEFAULTS = {
     foldersCollapsed: {}, // folder id ("" = no folder) -> true
     groups: [],           // [{ id, name }], in display order
     groupsCollapsed: {},  // group id ("" = no group) -> true
+    archive: {},          // book name -> true: kept out of duplicates, comparisons and copy targets
+    archiveOpen: false,
+    backups: [],          // [{ book, time, path }], oldest first
 };
 
 function settings() {
@@ -129,11 +138,12 @@ async function writeBook(name, data) {
  * Run `change(data)` on a fresh copy of the book and save it. Saves are queued,
  * so two quick edits never read the same old copy.
  */
-function mutateBook(name, change) {
+function mutateBook(name, change, { backup = false } = {}) {
     const run = saveChain.then(async () => {
         setStatus("Сохраняю…");
         const data = await getContext().loadWorldInfo(name);
         if (!data?.entries) throw new Error("лорбук не найден");
+        if (backup) await backupBook(name, data);
         const result = change(data);
         if (result === false) {
             // Nothing to save; still take the fresh copy, it shows what happened.
@@ -154,6 +164,35 @@ function mutateBook(name, change) {
         toastr.error("Не удалось сохранить лорбук: " + (e?.message || e), "Лорбуки");
         return false;
     });
+}
+
+const BACKUP_KEEP = 40;
+const BACKUP_GAP = 10 * 60 * 1000; // one copy per book is enough for a series of bulk actions
+
+/**
+ * Save the book as it is now into the user's files (data/<user>/user/files),
+ * before a bulk action. Throws if it fails: then the action does not run.
+ */
+async function backupBook(name, data) {
+    const s = settings();
+    if (s.backups.some((b) => b.book === name && Date.now() - b.time < BACKUP_GAP)) return;
+    const bytes = new TextEncoder().encode(JSON.stringify(data));
+    let bin = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    const headers = getContext().getRequestHeaders();
+    const response = await fetch("/api/files/upload", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ name: backupFileName(name), data: btoa(bin) }),
+    });
+    if (!response.ok) throw new Error(`резервная копия не сохранилась (HTTP ${response.status}), лорбук не тронут`);
+    const { path } = await response.json();
+    s.backups.push({ book: name, time: Date.now(), path });
+    while (s.backups.length > BACKUP_KEEP) {
+        const old = s.backups.shift();
+        fetch("/api/files/delete", { method: "POST", headers, body: JSON.stringify({ path: old.path }) }).catch(() => {});
+    }
+    saveSettings();
 }
 
 async function savePatch(uid, patch) {
@@ -214,7 +253,7 @@ function libIndex() {
 function loadLibrary() {
     if (library.loading) return library.loading;
     library.loading = (async () => {
-        const names = bookNames();
+        const names = activeBookNames();
         for (const n of [...library.books.keys()]) if (!names.includes(n)) library.books.delete(n);
         library.index = null;
         let done = 0;
@@ -264,6 +303,7 @@ async function openBook(name, uid = null) {
     state.stale = false;
     state.sortMode = false;
     state.compare = null;
+    state.select = null;
     const s = settings();
     s.lastBook = name;
     const target = state.openUid !== null ? data.entries[state.openUid] : null;
@@ -664,7 +704,7 @@ async function compareMenu(anchor) {
     // Books sharing the most identical entries with this one go first
     // (counted the way the comparison pairs them).
     const mine = Object.values(state.data.entries);
-    const names = bookNames().filter((n) => n !== state.book);
+    const names = activeBookNames().filter((n) => n !== state.book);
     const shared = new Map(names.map((n) => [n, compareBooks(mine, library.books.get(n) || []).same.length]));
     names.sort((a, b) => (shared.get(b) || 0) - (shared.get(a) || 0) || a.localeCompare(b, "ru", { sensitivity: "base" }));
     openMenu(anchor, [
@@ -677,6 +717,7 @@ async function startCompare(other) {
     await flushAll();
     state.compare = other;
     state.sortMode = false;
+    state.select = null;
     state.openUid = null;
     renderEntries();
     modal()?.querySelector(".stk-lore-entries")?.scrollTo(0, 0);
@@ -757,6 +798,409 @@ function fillCmpRow(row) {
     }
 }
 
+// ── Selection and bulk actions ──
+
+const entriesWord = (n) => `${n} ${plural(n, "запись", "записи", "записей")}`;
+
+function pickedEntries() {
+    return [...(state.select || [])].map((uid) => state.data?.entries?.[uid]).filter(Boolean);
+}
+
+async function startSelect() {
+    await flushAll();
+    state.select = new Set();
+    state.sortMode = false;
+    state.compare = null;
+    state.openUid = null;
+    renderEntries();
+}
+
+function togglePick(uid, row) {
+    const key = String(uid);
+    if (state.select.has(key)) state.select.delete(key);
+    else state.select.add(key);
+    row?.classList.toggle("picked", state.select.has(key));
+    const box = row?.querySelector(".stk-lore-pick");
+    if (box) box.checked = state.select.has(key);
+    updateBulkBar();
+}
+
+/** Pick every entry of a group, or unpick them if all are picked already. */
+function pickGroup(id) {
+    const groups = settings().groups;
+    const groupOf = (e) => (groups.some((g) => g.id === e[GROUP_FIELD]) ? e[GROUP_FIELD] : "");
+    const list = splitEntries(state.data).regular.filter((e) => groupOf(e) === id);
+    const all = list.every((e) => state.select.has(String(e.uid)));
+    for (const e of list) {
+        if (all) state.select.delete(String(e.uid));
+        else state.select.add(String(e.uid));
+    }
+    renderEntries();
+}
+
+function updateBulkBar() {
+    const bar = modal()?.querySelector(".stk-lore-bulkbar");
+    if (!bar) return;
+    const n = state.select?.size || 0;
+    bar.querySelector(".stk-lore-bulkn").textContent = n;
+    bar.querySelectorAll("[data-bulk]").forEach((b) => { b.disabled = !n; });
+}
+
+function bulkBarHtml() {
+    const off = state.select.size ? "" : "disabled";
+    return `
+        <div class="stk-lore-bulkbar">
+            <div class="stk-lore-bulkcount">Выбрано: <b class="stk-lore-bulkn">${state.select.size}</b>
+                <button class="stk-lore-linkbtn" data-act="pick-all">выбрать все</button>
+                <button class="stk-lore-linkbtn" data-act="pick-none">снять</button></div>
+            <div class="stk-lore-bulkbtns">
+                <button class="menu_button" data-bulk="on" ${off}>Включить</button>
+                <button class="menu_button" data-bulk="off" ${off}>Выключить</button>
+                <button class="menu_button" data-bulk="prio" ${off}>Приоритет…</button>
+                <button class="menu_button" data-bulk="group" ${off}>Группа…</button>
+                <button class="menu_button" data-bulk="copy" ${off} title="Копировать в другие лорбуки">📋 Копировать…</button>
+                <button class="menu_button" data-bulk="move" ${off} title="Перенести в другие лорбуки">➜ Перенести…</button>
+                <button class="menu_button stk-lore-danger" data-bulk="delete" ${off}>🗑 Удалить</button>
+            </div>
+        </div>`;
+}
+
+/** One save of the open book: patchOf(fresh entry) for each uid. Backed up first. */
+async function bulkPatch(uids, patchOf) {
+    const n = await mutateBook(state.book, (data) => {
+        let count = 0;
+        for (const uid of uids) {
+            const e = data.entries[uid];
+            if (!e) continue;
+            applyPatch(data, uid, patchOf(e), mirror);
+            count++;
+        }
+        return count || false;
+    }, { backup: true });
+    renderEntries();
+    return n;
+}
+
+function bulkGroupMenu(anchor, picked) {
+    const groups = settings().groups;
+    if (!groups.length) {
+        toastr.info("Групп пока нет — их создают кнопкой «🗂 Группы».", "Лорбуки");
+        return;
+    }
+    // Memories have no groups (Memory Books owns them).
+    const regular = picked.filter((e) => !isMemoryEntry(e));
+    const skipped = picked.length - regular.length;
+    if (!regular.length) {
+        toastr.info("Выбраны только воспоминания — у них нет групп.", "Лорбуки");
+        return;
+    }
+    const apply = async (id) => {
+        const n = await bulkPatch(regular.map((e) => String(e.uid)), () => ({ [GROUP_FIELD]: id || undefined }));
+        if (n !== false) {
+            toastr.success(`Группа изменена: ${entriesWord(n)}.` + (skipped ? ` Воспоминания (${skipped}) пропущены.` : ""), "Лорбуки");
+        }
+    };
+    openMenu(anchor, [
+        { header: `Группа для ${entriesWord(regular.length)}:` },
+        ...groups.map((g) => ({ label: g.name, run: () => apply(g.id) })),
+        { label: "— без группы —", run: () => apply(null) },
+    ]);
+}
+
+async function bulk(kind, anchor) {
+    await flushAll();
+    const picked = pickedEntries();
+    if (!picked.length) return;
+    const uids = picked.map((e) => String(e.uid));
+    const what = entriesWord(picked.length);
+    if (kind === "on" || kind === "off") {
+        const disable = kind === "off";
+        const n = await bulkPatch(uids, () => ({ disable }));
+        if (n !== false) toastr.success(`${disable ? "Выключено" : "Включено"}: ${entriesWord(n)}.`, "Лорбуки");
+    } else if (kind === "prio") {
+        const input = await askName(`Приоритет для ${what}: число (например 100) или сдвиг (+5, -5)`);
+        if (input === null) return;
+        if (parsePriority(input, 100) === null) {
+            toastr.warning("Не понял: нужно число, например 100, или сдвиг +5 / -5.", "Лорбуки");
+            return;
+        }
+        const n = await bulkPatch(uids, (e) => ({ order: parsePriority(input, e.order ?? 100) }));
+        if (n !== false) toastr.success(`Приоритет изменён: ${entriesWord(n)}.`, "Лорбуки");
+    } else if (kind === "group") {
+        bulkGroupMenu(anchor, picked);
+    } else if (kind === "delete") {
+        const memories = picked.filter(isMemoryEntry).length;
+        const yes = await askConfirm(`Удалить ${what}?`,
+            `Из лорбука «${escHtml(state.book)}» будут удалены ${what}${memories ? `, из них воспоминаний Memory Books: ${memories}` : ""}.
+            Перед удалением лорбук сохраняется в резервную копию.`);
+        if (!yes) return;
+        const n = await mutateBook(state.book, (data) => {
+            let count = 0;
+            for (const uid of uids) {
+                if (!data.entries[uid]) continue;
+                delete data.entries[uid];
+                worldInfo.deleteWIOriginalDataValue?.(data, uid);
+                count++;
+            }
+            return count || false;
+        }, { backup: true });
+        if (n !== false) {
+            for (const uid of uids) state.select.delete(uid);
+            toastr.success(`Удалено: ${entriesWord(n)}.`, "Лорбуки");
+        }
+        renderEntries();
+    } else if (kind === "copy" || kind === "move") {
+        copyFlow(uids, kind === "move");
+    }
+}
+
+// ── Copy / move entries into other books ──
+
+/** A new entry in `data` with every field of `src` (Memory Books fields too); only the uid is new. */
+function addCopy(book, data, src) {
+    const entry = worldInfo.createWorldInfoEntry(book, data);
+    if (!entry) throw new Error("не удалось создать запись");
+    const uid = entry.uid;
+    for (const k of Object.keys(entry)) delete entry[k];
+    Object.assign(entry, structuredClone(src), { uid });
+}
+
+const CHOICES = [
+    ["replace", "Заменить текст", "Текст той записи заменится этим; её приоритет и вкл./выкл. останутся"],
+    ["add", "Добавить рядом", "Появится вторая запись с тем же названием"],
+    ["skip", "Пропустить", "В этот лорбук запись не попадёт"],
+];
+
+/**
+ * Copy (or move) entries of the open book into other books (the archive excluded):
+ * pick the books, then decide what to do where an entry with the same title exists.
+ */
+async function copyFlow(uids, move) {
+    closeMenu();
+    hideTip();
+    await flushAll();
+    const source = state.book;
+    const books = activeBookNames().filter((n) => n !== source);
+    if (!books.length) {
+        toastr.info("Некуда копировать: других лорбуков вне архива нет.", "Лорбуки");
+        return;
+    }
+    const s = settings();
+    const what = entriesWord(uids.length);
+    const verb = move ? "Перенести" : "Копировать";
+    const targets = new Set();
+    let filter = "";
+    let plan = null; // [{ book, items: [{ uid, title, content, place, there, choice }] }]
+
+    const panel = document.createElement("div");
+    panel.className = "stk-lore-menu stk-lore-panel stk-lore-copy";
+    const head = (sub) => `
+        <div class="stk-lore-panel-head">
+            <b>${verb} ${what} из «${escHtml(source)}»${sub ? ` — ${sub}` : ""}</b>
+            <button class="menu_button sf-card-btn" data-pact="close" title="Закрыть">✖</button>
+        </div>`;
+    const targetsHtml = () => books.filter((b) => b.toLowerCase().includes(filter.toLowerCase())).map((b) => {
+        const path = folderPath(s.folders, folderOf(s.folders, s.bookFolder, b));
+        return `
+            <label class="stk-lore-target">
+                <input type="checkbox" data-target="${escAttr(b)}" ${targets.has(b) ? "checked" : ""}>
+                <span>${escHtml(b)}${path.length ? `<small class="stk-lore-path">${escHtml(path.join(" › "))}</small>` : ""}</span>
+            </label>`;
+    }).join("") || `<p class="stk-note">Ничего не найдено</p>`;
+    const nextLabel = () => `Далее${targets.size ? ` (${targets.size})` : ""}`;
+
+    const drawPick = () => {
+        panel.innerHTML = `
+            ${head("куда?")}
+            <input class="text_pole stk-lore-cfilter" type="search" autocomplete="off" placeholder="Найти лорбук…" value="${escAttr(filter)}">
+            <div class="stk-lore-targets">${targetsHtml()}</div>
+            <p class="stk-note">Лорбуки из архива здесь не показаны.</p>
+            <div class="stk-lore-gfoot">
+                <button class="menu_button" data-pact="close">Отмена</button>
+                <button class="menu_button" data-pact="next" ${targets.size ? "" : "disabled"}>${nextLabel()}</button>
+            </div>`;
+    };
+
+    const buildPlan = async () => {
+        const src = await getContext().loadWorldInfo(source);
+        plan = [];
+        for (const book of [...targets].sort((a, b) => a.localeCompare(b, "ru", { sensitivity: "base" }))) {
+            const data = await getContext().loadWorldInfo(book);
+            if (!data?.entries) throw new Error(`лорбук «${book}» не загрузился`);
+            const entries = Object.values(data.entries);
+            plan.push({
+                book,
+                items: uids.filter((u) => src?.entries?.[u]).map((u) => {
+                    const e = src.entries[u];
+                    const place = placeCopy(e, entries);
+                    return {
+                        uid: u, title: e.comment, content: e.content, place,
+                        there: place.kind === "conflict" ? data.entries[place.uid] : null,
+                        choice: place.kind === "conflict" ? null : place.kind === "same" ? "skip" : "add",
+                    };
+                }),
+            });
+        }
+    };
+    const conflicts = () => plan.flatMap((b, bi) => b.items.map((it, ii) => ({ ...it, book: b.book, bi, ii })))
+        .filter((it) => it.place.kind === "conflict");
+    const undecided = () => plan.some((b) => b.items.some((it) => it.choice === null));
+    const choiceButtons = (it) => CHOICES.map(([c, label, hint]) =>
+        `<button class="stk-lore-chip${it.choice === c ? " active" : ""}" data-pact="choice" data-c="${c}" title="${escAttr(hint)}">${label}</button>`).join("");
+
+    const drawPlan = () => {
+        const all = plan.flatMap((b) => b.items);
+        const fresh = all.filter((it) => it.place.kind === "new").length;
+        const same = all.filter((it) => it.place.kind === "same").length;
+        const list = conflicts();
+        const conflictsHtml = list.map((it) => `
+            <div class="stk-lore-conflict" data-bi="${it.bi}" data-ii="${it.ii}">
+                <div><b>${escHtml(it.title || "без названия")}</b> → «${escHtml(it.book)}»</div>
+                <div class="stk-lore-chips">${choiceButtons(it)}</div>
+                <details class="stk-lore-cdiff"><summary>чем отличается</summary>
+                    ${diffHtml(it.there?.content, it.content, `в «${it.book}» сейчас`, "в копируемой записи")}</details>
+            </div>`).join("");
+        panel.innerHTML = `
+            ${head(`в ${booksCount(plan.length)}`)}
+            <p class="stk-lore-stats">Новых: ${fresh} · Уже есть точно такие же (пропускаются): ${same} · Совпадают названия: ${list.length}</p>
+            ${list.length ? `
+            <div class="stk-lore-conflicts-head">
+                <div>В этих лорбуках уже есть запись с таким же названием, но другим текстом. Что сделать?</div>
+                <div class="stk-lore-chips"><span class="stk-lore-forall">Для всех:</span>${CHOICES.map(([c, label, hint]) =>
+                    `<button class="stk-lore-chip" data-pact="all" data-c="${c}" title="${escAttr(hint)}">${label}</button>`).join("")}</div>
+            </div>
+            ${conflictsHtml}` : ""}
+            ${move ? `<p class="stk-note">После переноса записи удалятся из «${escHtml(source)}» (перед этим он сохраняется в резервную копию).
+                Запись, пропущенная во всех выбранных лорбуках, останется на месте.</p>` : ""}
+            <div class="stk-lore-gfoot">
+                <button class="menu_button" data-pact="back">← Назад</button>
+                <button class="menu_button" data-pact="run" ${undecided() ? "disabled" : ""}>${move ? "Перенести" : "Копировать"}</button>
+            </div>
+            ${list.length ? `<p class="stk-note stk-lore-runhint" ${undecided() ? "" : "hidden"}>Выберите действие для каждого совпадения.</p>` : ""}`;
+    };
+
+    const run = async () => {
+        panel.remove();
+        const src = await getContext().loadWorldInfo(source); // fresh: the user may have typed since
+        const landed = new Set();
+        const failed = [];
+        let added = 0;
+        let replaced = 0;
+        let already = 0;
+        let skipped = 0;
+        for (const { book, items } of plan) {
+            for (const it of items) {
+                if (it.choice !== "skip") continue;
+                if (it.place.kind === "same") {
+                    already++;
+                    landed.add(it.uid);
+                } else skipped++;
+            }
+            const work = items.filter((it) => it.choice === "add" || it.choice === "replace");
+            if (!work.length) continue;
+            let a = 0;
+            let r = 0;
+            const ok = await mutateBook(book, (data) => {
+                for (const it of work) {
+                    const e = src?.entries?.[it.uid];
+                    if (!e) continue;
+                    if (it.choice === "replace" && data.entries[it.place.uid]) {
+                        applyPatch(data, it.place.uid, { content: e.content }, mirror);
+                        r++;
+                    } else {
+                        addCopy(book, data, e);
+                        a++;
+                    }
+                }
+                return a + r || false;
+            }, { backup: work.some((it) => it.choice === "replace") });
+            if (ok === false) {
+                failed.push(book);
+                continue;
+            }
+            added += a;
+            replaced += r;
+            for (const it of work) landed.add(it.uid);
+        }
+        let removed = 0;
+        if (move && landed.size) {
+            const n = await mutateBook(source, (data) => {
+                let count = 0;
+                for (const uid of landed) {
+                    if (!data.entries[uid]) continue;
+                    delete data.entries[uid];
+                    worldInfo.deleteWIOriginalDataValue?.(data, uid);
+                    count++;
+                }
+                return count || false;
+            }, { backup: true });
+            if (n !== false) {
+                removed = n;
+                for (const uid of landed) state.select?.delete(uid);
+            }
+        }
+        renderEntries();
+        const parts = [`добавлено: ${added}`];
+        if (replaced) parts.push(`текст заменён: ${replaced}`);
+        if (already) parts.push(`уже были: ${already}`);
+        if (skipped) parts.push(`пропущено: ${skipped}`);
+        toastr.success((move ? "Перенос" : "Копирование") + " — " + parts.join(", ") + "." +
+            (move ? ` Удалено из «${source}»: ${removed}.` : ""), "Лорбуки", { timeOut: 7000 });
+        if (failed.length) toastr.error(`Не удалось сохранить: ${failed.join(", ")}.`, "Лорбуки");
+    };
+
+    panel.addEventListener("click", async (ev) => {
+        ev.stopPropagation();
+        const full = ev.target.closest("[data-diff-full]");
+        if (full) return toggleDiffFull(full);
+        const btn = ev.target.closest("[data-pact]");
+        const act = btn?.dataset.pact;
+        if (act === "close") return panel.remove();
+        if (act === "back") return drawPick();
+        if (act === "next") {
+            btn.disabled = true;
+            btn.textContent = "Проверяю…";
+            try {
+                await buildPlan();
+            } catch (e) {
+                toastr.error(String(e?.message || e), "Лорбуки");
+                return drawPick();
+            }
+            return drawPlan();
+        }
+        if (act === "all") {
+            for (const it of conflicts()) plan[it.bi].items[it.ii].choice = btn.dataset.c;
+            return drawPlan();
+        }
+        if (act === "choice") {
+            const row = btn.closest(".stk-lore-conflict");
+            const it = plan[row.dataset.bi].items[row.dataset.ii];
+            it.choice = btn.dataset.c;
+            row.querySelector(".stk-lore-chips").innerHTML = choiceButtons(it);
+            panel.querySelector("[data-pact=run]").disabled = undecided();
+            panel.querySelector(".stk-lore-runhint")?.toggleAttribute("hidden", !undecided());
+            return;
+        }
+        if (act === "run") return run();
+    });
+    panel.addEventListener("change", (ev) => {
+        const name = ev.target.dataset?.target;
+        if (name === undefined) return;
+        if (ev.target.checked) targets.add(name);
+        else targets.delete(name);
+        const next = panel.querySelector("[data-pact=next]");
+        next.disabled = !targets.size;
+        next.textContent = nextLabel();
+    });
+    panel.addEventListener("input", (ev) => {
+        if (!ev.target.classList.contains("stk-lore-cfilter")) return;
+        filter = ev.target.value;
+        panel.querySelector(".stk-lore-targets").innerHTML = targetsHtml();
+    });
+    drawPick();
+    modal().appendChild(panel);
+}
+
 // ── UI ──
 
 function setStatus(text) {
@@ -769,6 +1213,34 @@ function bookNames() {
     return [...names].sort((a, b) => a.localeCompare(b, "ru", { sensitivity: "base" }));
 }
 
+const ARCHIVE = "__archive"; // the system folder id
+
+function isArchived(name) {
+    return !!settings().archive[name];
+}
+
+/** Books that take part in duplicates, comparisons and copying: all but the archive. */
+function activeBookNames() {
+    return bookNames().filter((n) => !isArchived(n));
+}
+
+function setArchived(book, on) {
+    const s = settings();
+    if (on) s.archive[book] = true;
+    else delete s.archive[book];
+    saveSettings();
+    if (on) {
+        library.books.delete(book);
+        library.index = null;
+        if (state.compare === book) state.compare = null;
+    } else if (library.ready) {
+        loadLibrary(); // reads the returned book, then re-renders
+    }
+    renderBooks();
+    renderEntries();
+    toastr.info(on ? `«${book}» — в архиве.` : `«${book}» вернулся из архива.`, "Лорбуки");
+}
+
 function bookRowHtml(name, showPath = false) {
     const s = settings();
     const path = showPath ? folderPath(s.folders, folderOf(s.folders, s.bookFolder, name)) : [];
@@ -776,23 +1248,24 @@ function bookRowHtml(name, showPath = false) {
         <div class="stk-lore-bookrow" draggable="true" data-drag-book="${escAttr(name)}">
             <button class="stk-lore-book${name === state.book ? " active" : ""}" data-book="${escAttr(name)}">${escHtml(name)}${
                 path.length ? `<small class="stk-lore-path">${escHtml(path.join(" › "))}</small>` : ""}</button>
-            <button class="stk-lore-more" data-menu="book" data-id="${escAttr(name)}" title="В папку…">⋯</button>
+            <button class="stk-lore-more" data-menu="book" data-id="${escAttr(name)}" title="В папку, в архив…">⋯</button>
         </div>`;
 }
 
 /** A folder with its subfolders and books; id "" is the "no folder" bucket. */
 function folderHtml(id, name, books, inner) {
     const s = settings();
-    const collapsed = !!s.foldersCollapsed[id];
+    const archive = id === ARCHIVE;
+    const collapsed = archive ? !s.archiveOpen : !!s.foldersCollapsed[id];
     return `
-        <div class="stk-lore-folder">
+        <div class="stk-lore-folder${archive ? " stk-lore-archive" : ""}">
             <div class="stk-lore-folder-head" data-drop-folder="${escAttr(id)}">
                 <button class="stk-lore-folder-toggle" data-act="toggle-folder" data-id="${escAttr(id)}">
                     <span class="stk-lore-caret">${collapsed ? "▸" : "▾"}</span>
-                    <span class="stk-lore-folder-name">${id ? "📁" : "📄"} ${escHtml(name)}</span>
+                    <span class="stk-lore-folder-name">${archive ? "🗄" : id ? "📁" : "📄"} ${escHtml(name)}</span>
                     <span class="stk-lore-count">${books}</span>
                 </button>
-                ${id ? `<button class="stk-lore-more" data-menu="folder" data-id="${escAttr(id)}" title="Папка">⋯</button>` : ""}
+                ${id && !archive ? `<button class="stk-lore-more" data-menu="folder" data-id="${escAttr(id)}" title="Папка">⋯</button>` : ""}
             </div>
             ${collapsed ? "" : `<div class="stk-lore-folder-body">${inner}</div>`}
         </div>`;
@@ -802,18 +1275,20 @@ function renderBooks() {
     const list = modal()?.querySelector(".stk-lore-books-list");
     if (!list) return;
     const s = settings();
-    const names = bookNames();
+    const names = activeBookNames();
+    const archived = bookNames().filter(isArchived);
     const f = state.filter.trim().toLowerCase();
 
-    // Searching: a flat list of matches, each with the folder it lives in.
+    // Searching: a flat list of matches, each with the folder it lives in. The archive is not searched.
     if (f) {
         const hits = names.filter((n) => n.toLowerCase().includes(f));
         list.innerHTML = hits.length ? hits.map((n) => bookRowHtml(n, true)).join("") : `<p class="stk-note">Ничего не найдено</p>`;
         return;
     }
+    const archiveHtml = archived.length ? folderHtml(ARCHIVE, "Архив", archived.length, archived.map((n) => bookRowHtml(n)).join("")) : "";
     // No folders yet: the plain list.
     if (!Object.keys(s.folders).length) {
-        list.innerHTML = names.map((n) => bookRowHtml(n)).join("");
+        list.innerHTML = names.map((n) => bookRowHtml(n)).join("") + archiveHtml;
         return;
     }
     const booksIn = (id) => names.filter((n) => folderOf(s.folders, s.bookFolder, n) === id);
@@ -822,7 +1297,8 @@ function renderBooks() {
             tree(fd.id) + booksIn(fd.id).map((n) => bookRowHtml(n)).join(""))).join("");
     const loose = booksIn(null);
     list.innerHTML = tree(null) +
-        (loose.length ? folderHtml("", "Без папки", loose.length, loose.map((n) => bookRowHtml(n)).join("")) : "");
+        (loose.length ? folderHtml("", "Без папки", loose.length, loose.map((n) => bookRowHtml(n)).join("")) : "") +
+        archiveHtml;
 }
 
 // ── Menus (folder / book actions) ──
@@ -904,23 +1380,31 @@ function folderMenu(anchor, id) {
 
 function moveBook(book, folderId) {
     const s = settings();
+    if (folderId === ARCHIVE) {
+        if (!isArchived(book)) setArchived(book, true);
+        return;
+    }
     if (folderId) s.bookFolder[book] = folderId;
     else delete s.bookFolder[book];
-    saveAndRenderBooks();
+    if (isArchived(book)) setArchived(book, false); // saves and re-renders
+    else saveAndRenderBooks();
 }
 
 function bookMenu(anchor, book) {
     const s = settings();
     const folders = flatFolders(s.folders);
-    if (!folders.length) {
-        toastr.info("Сначала создайте папку кнопкой «＋ Папка».", "Лорбуки");
-        return;
-    }
-    const current = folderOf(s.folders, s.bookFolder, book);
+    const archived = isArchived(book);
+    const current = archived ? undefined : folderOf(s.folders, s.bookFolder, book);
     openMenu(anchor, [
-        { header: `«${book}» — в папку:` },
-        ...folders.map((f) => ({ label: f.name, depth: f.depth, current: f.id === current, run: () => moveBook(book, f.id) })),
-        { label: "Без папки", current: !current, run: () => moveBook(book, null) },
+        { header: `«${book}»` },
+        archived
+            ? { label: "↩ Вернуть из архива", run: () => setArchived(book, false) }
+            : { label: "🗄 В архив", run: () => setArchived(book, true) },
+        ...(folders.length ? [
+            { header: archived ? "Вернуть в папку:" : "В папку:" },
+            ...folders.map((f) => ({ label: f.name, depth: f.depth, current: f.id === current, run: () => moveBook(book, f.id) })),
+            { label: "Без папки", current: current === null, run: () => moveBook(book, null) },
+        ] : []),
     ]);
 }
 
@@ -944,6 +1428,7 @@ function entryHtml(e, memory = false) {
     const title = e.comment || "";
     const head = `
         <div class="stk-lore-row" data-act="toggle-open">
+            ${state.select ? `<input type="checkbox" class="stk-lore-pick" title="Выбрать" ${state.select.has(String(e.uid)) ? "checked" : ""}>` : ""}
             <input type="checkbox" class="stk-lore-on" title="${e.disable ? "Выключена — включить" : "Включена — выключить"}" ${e.disable ? "" : "checked"}>
             <div class="stk-lore-main">
                 <div class="stk-lore-title">${title ? escHtml(title) : `<i>без названия</i>`}</div>
@@ -954,7 +1439,10 @@ function entryHtml(e, memory = false) {
             ${versions.length ? `<button class="stk-lore-dup stk-lore-ver" data-act="versions" data-tip="versions" aria-label="Другие версии текста: ${versions.length}">≠ ${versions.length}</button>` : ""}
             <span class="stk-lore-prio" title="Приоритет">${e.order ?? 100}</span>
         </div>`;
-    if (!open) return `<div class="stk-lore-entry${e.disable ? " off" : ""}" data-uid="${e.uid}">${head}</div>`;
+    if (!open) {
+        const picked = state.select?.has(String(e.uid));
+        return `<div class="stk-lore-entry${e.disable ? " off" : ""}${picked ? " picked" : ""}" data-uid="${e.uid}">${head}</div>`;
+    }
     return `
     <div class="stk-lore-entry open${e.disable ? " off" : ""}" data-uid="${e.uid}">
         ${head}
@@ -981,6 +1469,7 @@ function entryHtml(e, memory = false) {
                 ${memory
                     ? `<button class="menu_button sf-card-btn" data-act="to-regular" title="Убрать из воспоминаний Memory Books">↩ В обычные записи</button>`
                     : `<button class="menu_button sf-card-btn" data-act="to-memory" title="Сделать воспоминанием Memory Books">🧠 В воспоминания</button>`}
+                <button class="menu_button sf-card-btn" data-act="copy-one" title="Копировать в другие лорбуки">📋 Копировать в…</button>
                 <button class="menu_button sf-card-btn" data-act="delete">🗑 Удалить</button>
                 <button class="menu_button sf-card-btn" data-act="toggle-open">Свернуть</button>
             </div>
@@ -1004,24 +1493,31 @@ function renderEntries() {
     box.innerHTML = `
         <div class="stk-lore-bookhead">
             <button class="menu_button sf-card-btn stk-lore-back" data-act="back">← Лорбуки</button>
-            <h4 class="stk-lore-bookname">${escHtml(state.book)}</h4>
+            <h4 class="stk-lore-bookname">${escHtml(state.book)}${isArchived(state.book) ? ` <span class="stk-lore-archtag" title="В архиве: не участвует в поиске дублей и сравнениях">🗄 архив</span>` : ""}</h4>
         </div>
         ${state.compare ? compareHtml() : `<div class="stk-lore-toolbar">
+            ${state.select ? `
+            <button class="menu_button" data-act="groups">🗂 Группы</button>
+            <button class="menu_button stk-lore-sortbtn active" data-act="select-mode">✓ Готово</button>` : `
             ${state.sortMode ? "" : `
             <button class="menu_button" data-act="add">＋ Новая запись</button>
             <button class="menu_button" data-act="groups">🗂 Группы</button>
-            <button class="menu_button" data-act="compare">⇄ Сравнить</button>`}
-            <button class="menu_button stk-lore-sortbtn${state.sortMode ? " active" : ""}" data-act="sort-mode">${state.sortMode ? "✓ Готово" : "↕ Порядок"}</button>
+            <button class="menu_button" data-act="compare">⇄ Сравнить</button>
+            <button class="menu_button" data-act="select-mode">☑ Выбрать</button>`}
+            <button class="menu_button stk-lore-sortbtn${state.sortMode ? " active" : ""}" data-act="sort-mode">${state.sortMode ? "✓ Готово" : "↕ Порядок"}</button>`}
             <span class="stk-lore-stats">${regular.length} записей${off ? ` · выкл. ${off}` : ""}${odd ? ` · ⚠ ${odd}` : ""}</span>
         </div>
         ${state.sortMode ? sortModeHtml() : `
-        <p class="stk-note">Сверху включённые, ниже выключенные; внутри — по приоритету: меньшее число выше, как в промпте.</p>
+        <p class="stk-note">${state.select
+            ? "Отметьте записи (нажатием на строку) — действия внизу."
+            : "Сверху включённые, ниже выключенные; внутри — по приоритету: меньшее число выше, как в промпте."}</p>
         ${(settings().groups.length ? groupedHtml(regular) : listHtml(regular, false)) || `<p class="stk-note">Записей нет.</p>`}
         ${memories.length ? `
         <details class="stk-lore-memories" ${settings().memoriesOpen === false ? "" : "open"}>
             <summary>🧠 Воспоминания Memory Books (${memories.length}${memOff ? ` · выкл. ${memOff}` : ""})</summary>
             ${listHtml(memories, true)}
-        </details>` : ""}`}`}`;
+        </details>` : ""}
+        ${state.select ? bulkBarHtml() : ""}`}`}`;
 
     box.querySelector(".stk-lore-memories")?.addEventListener("toggle", (e) => {
         settings().memoriesOpen = e.target.open;
@@ -1038,11 +1534,14 @@ function groupedHtml(entries) {
         const off = list.filter((e) => e.disable).length;
         return `
         <div class="stk-lore-group">
-            <button class="stk-lore-group-head" data-act="toggle-group" data-id="${escAttr(id)}">
-                <span class="stk-lore-caret">${collapsed[id] ? "▸" : "▾"}</span>
-                <span class="stk-lore-group-name">${escHtml(group?.name ?? "Без группы")}</span>
-                <span class="stk-lore-count">${list.length}${off ? ` · выкл. ${off}` : ""}</span>
-            </button>
+            <div class="stk-lore-group-headrow">
+                <button class="stk-lore-group-head" data-act="toggle-group" data-id="${escAttr(id)}">
+                    <span class="stk-lore-caret">${collapsed[id] ? "▸" : "▾"}</span>
+                    <span class="stk-lore-group-name">${escHtml(group?.name ?? "Без группы")}</span>
+                    <span class="stk-lore-count">${list.length}${off ? ` · выкл. ${off}` : ""}</span>
+                </button>
+                ${state.select ? `<button class="menu_button sf-card-btn" data-act="pick-group" data-id="${escAttr(id)}" title="Выбрать всю группу (ещё раз — снять)">☑ все</button>` : ""}
+            </div>
             ${collapsed[id] ? "" : `<div class="stk-lore-list">${list.map((e) => entryHtml(e)).join("")}</div>`}
         </div>`;
     }).join("");
@@ -1095,6 +1594,8 @@ function bindModal(m) {
             closeMenu();
             return;
         }
+        const bulkEl = e.target.closest("[data-bulk]");
+        if (bulkEl) return bulk(bulkEl.dataset.bulk, bulkEl);
         const more = e.target.closest("[data-menu]");
         if (more) return more.dataset.menu === "folder" ? folderMenu(more, more.dataset.id) : bookMenu(more, more.dataset.id);
         const jump = e.target.closest("[data-open-book]");
@@ -1104,11 +1605,15 @@ function bindModal(m) {
         const book = e.target.closest(".stk-lore-book");
         if (book) return openBook(book.dataset.book);
         if (e.target.closest(".stk-lore-close")) return closeModal();
-        if (e.target.classList.contains("stk-lore-on")) return; // handled by change
+        if (e.target.classList.contains("stk-lore-on") || e.target.classList.contains("stk-lore-pick")) return; // handled by change
 
         const actEl = e.target.closest("[data-act]");
         const act = actEl?.dataset.act;
         const uid = entryUid(e.target);
+        if (act === "toggle-folder" && actEl.dataset.id === ARCHIVE) {
+            settings().archiveOpen = !settings().archiveOpen;
+            return saveAndRenderBooks();
+        }
         if (act === "toggle-folder") {
             const c = settings().foldersCollapsed;
             if (c[actEl.dataset.id]) delete c[actEl.dataset.id];
@@ -1143,6 +1648,20 @@ function bindModal(m) {
             return reorder(i, act === "move-up" ? i - 1 : i + 1);
         }
         if (act === "to-memory" || act === "to-regular") return setMemory(uid, act === "to-memory");
+        if (act === "select-mode") {
+            if (state.select) {
+                state.select = null;
+                return renderEntries();
+            }
+            return startSelect();
+        }
+        if (act === "pick-all" || act === "pick-none") {
+            state.select = new Set(act === "pick-all" ? Object.keys(state.data.entries) : []);
+            return renderEntries();
+        }
+        if (act === "pick-group") return pickGroup(actEl.dataset.id);
+        if (act === "copy-one") return copyFlow([uid], false);
+        if (state.select && act === "toggle-open" && uid !== undefined) return togglePick(uid, e.target.closest(".stk-lore-entry"));
         if (act === "back") {
             await flushAll();
             state.book = null;
@@ -1158,7 +1677,9 @@ function bindModal(m) {
 
     m.addEventListener("change", (e) => {
         const uid = entryUid(e.target);
-        if (e.target.classList.contains("stk-lore-on")) {
+        if (e.target.classList.contains("stk-lore-pick")) {
+            togglePick(uid, e.target.closest(".stk-lore-entry"));
+        } else if (e.target.classList.contains("stk-lore-on")) {
             const disable = !e.target.checked;
             e.target.closest(".stk-lore-entry").classList.toggle("off", disable);
             // Re-sort: the entry moves between the enabled and the disabled part.
@@ -1307,7 +1828,7 @@ function openLorePopup() {
 /** Someone else (Memory Books, SillyTavern's editor) saved the open book. */
 function onWorldInfoUpdated(name, data) {
     if (!data?.entries) return;
-    if (library.ready || library.loading) libraryPut(name, data);
+    if ((library.ready || library.loading) && !isArchived(name)) libraryPut(name, data);
     if (ownSave || !modal()) return;
     if (name === state.book) state.data = structuredClone(data);
     // Another book changed: only the duplicate marks or the comparison may differ.

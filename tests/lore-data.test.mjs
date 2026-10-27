@@ -7,6 +7,7 @@ import {
     childFolders, folderOf, folderPath, flatFolders, deleteFolder, countBooks,
     GROUP_FIELD, groupEntries, moveGroup, reorderPlan,
     normTitle, buildIndex, copiesOf, versionsOf, compareBooks, diffText,
+    placeCopy, parsePriority, backupFileName,
 } from "../lore-data.js";
 
 const standard = (extra = {}) => ({ uid: 0, comment: "x", content: "y", order: 100, disable: false, ...STANDARD, ...extra });
@@ -242,4 +243,32 @@ test("diffText always rebuilds both texts", () => {
         assert.equal(side(ops, "-"), a);
         assert.equal(side(ops, "+"), b);
     }
+});
+
+// ── Copying and bulk edits ──
+
+test("placeCopy: same text anywhere, else a title twin, else new", () => {
+    const target = [standard({ uid: 3, comment: "Другое имя", content: "мама" }), standard({ uid: 4, comment: "ШРАМЫ", content: "мало" }), standard({ uid: 5, comment: "Пусто", content: "" })];
+    assert.deepEqual(placeCopy(standard({ comment: "Семья", content: "мама" }), target), { kind: "same", uid: 3 });
+    assert.deepEqual(placeCopy(standard({ comment: "Шрамы", content: "много" }), target), { kind: "conflict", uid: 4 });
+    assert.deepEqual(placeCopy(standard({ comment: "Новое", content: "текст" }), target), { kind: "new" });
+    // an empty text is not "the same entry"
+    assert.deepEqual(placeCopy(standard({ comment: "Ещё", content: "" }), target), { kind: "new" });
+});
+
+test("parsePriority: a number sets, a sign shifts", () => {
+    assert.equal(parsePriority("80", 100), 80);
+    assert.equal(parsePriority(" +5 ", 100), 105);
+    assert.equal(parsePriority("-5", 100), 95);
+    assert.equal(parsePriority("−200", 100), 0); // typographic minus, floor at 0
+    assert.equal(parsePriority("abc", 100), null);
+    assert.equal(parsePriority("", 100), null);
+});
+
+test("backupFileName passes SillyTavern's file name rule", () => {
+    const at = new Date(2026, 9, 27, 3, 4, 5);
+    assert.equal(backupFileName("Фишер Джоли 3", at), "lorebook-backup_Fisher_Dzholi_3_20261027-030405.json");
+    assert.equal(backupFileName("!Fisher Jolie non-card MAIN (2)", at), "lorebook-backup_Fisher_Jolie_non-card_MAIN_2_20261027-030405.json");
+    assert.equal(backupFileName("???", at), "lorebook-backup_book_20261027-030405.json");
+    for (const n of ["Карнос (Самый последний)", "Мир Цербера", "a/b\c"]) assert.match(backupFileName(n), /^[a-zA-Z0-9_\-.]+$/);
 });

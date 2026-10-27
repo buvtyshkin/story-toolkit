@@ -307,6 +307,52 @@ export function compareBooks(entriesA, entriesB) {
     return { same, changed, onlyA, onlyB: restB };
 }
 
+// ── Copying and bulk edits ──
+
+/**
+ * What copying `src` into a book holding `entries` means:
+ * { kind: "same", uid }      the very same text is already there (title aside);
+ * { kind: "conflict", uid }  an entry with the same title but other text;
+ * { kind: "new" }            nothing like it.
+ */
+export function placeCopy(src, entries) {
+    const content = src.content || "";
+    const same = content.trim() && entries.find((e) => (e.content || "") === content);
+    if (same) return { kind: "same", uid: same.uid };
+    const title = normTitle(src.comment);
+    const twin = title && entries.find((e) => normTitle(e.comment) === title);
+    if (twin) return { kind: "conflict", uid: twin.uid };
+    return { kind: "new" };
+}
+
+/** "100" sets the priority, "+5" / "-5" shifts it (never below 0). null if not understood. */
+export function parsePriority(input, current) {
+    const m = String(input ?? "").trim().replace(/[−–—]/g, "-").match(/^([+-])?\s*(\d+)$/);
+    if (!m) return null;
+    const n = Number(m[2]);
+    if (m[1] === "+") return current + n;
+    if (m[1] === "-") return Math.max(0, current - n);
+    return n;
+}
+
+const TRANSLIT = {
+    а: "a", б: "b", в: "v", г: "g", д: "d", е: "e", ё: "e", ж: "zh", з: "z", и: "i", й: "y", к: "k", л: "l",
+    м: "m", н: "n", о: "o", п: "p", р: "r", с: "s", т: "t", у: "u", ф: "f", х: "h", ц: "ts", ч: "ch", ш: "sh",
+    щ: "sch", ъ: "", ы: "y", ь: "", э: "e", ю: "yu", я: "ya",
+};
+
+/** A file name SillyTavern's file upload accepts (latin letters, digits, _ - .). */
+export function backupFileName(book, date = new Date()) {
+    const slug = [...String(book)].map((ch) => {
+        const t = TRANSLIT[ch.toLowerCase()];
+        if (t === undefined) return ch;
+        return ch === ch.toLowerCase() ? t : t.charAt(0).toUpperCase() + t.slice(1);
+    }).join("").replace(/[^a-zA-Z0-9_-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60) || "book";
+    const p = (n) => String(n).padStart(2, "0");
+    const stamp = `${date.getFullYear()}${p(date.getMonth() + 1)}${p(date.getDate())}-${p(date.getHours())}${p(date.getMinutes())}${p(date.getSeconds())}`;
+    return `lorebook-backup_${slug}_${stamp}.json`;
+}
+
 // ── Text diff ──
 
 const DIFF_CELLS = 3_000_000; // bigger pieces are shown as "replaced" whole
