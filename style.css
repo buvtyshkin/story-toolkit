@@ -1519,3 +1519,80 @@
     .stk-lore-searchbtn { min-height: 44px; }
     .stk-lore-hit .stk-lore-where .stk-lore-linkbtn { padding: 4px 0; }
 }
+
+/* Guide: набор гайдов — плашки */
+.stk-guide-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 2px 0 10px;
+}
+.stk-guide-chip {
+    padding: 4px 11px;
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    border-radius: 14px;
+    cursor: pointer;
+    user-select: none;
+    font-size: 0.92em;
+    opacity: 0.8;
+}
+.stk-guide-chip.stk-chip-on {
+    border-color: var(--golden, #d4af37);
+    background: rgba(212, 175, 55, 0.15);
+    opacity: 1;
+}
+.stk-guide-empty { font-size: 0.85em; opacity: 0.6; margin: 4px 0; }
+.stk-guide-fill {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 8px;
+}
+.stk-guide-fill > span { white-space: nowrap; opacity: 0.75; }
+.stk-guide-fill > input { flex: 1; margin: 0; }
+.stk-modal-actions { flex-wrap: wrap; }
+
+/* Guide: редактор набора */
+.stk-guide-lib { margin-top: 12px; }
+.stk-guide-lib > summary { cursor: pointer; opacity: 0.75; }
+.stk-guide-lib-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 8px 0;
+    padding: 6px;
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    border-radius: 6px;
+}
+.stk-guide-lib-head { display: flex; gap: 6px; align-items: center; }
+.stk-guide-lib-head .stk-lib-name { flex: 1; margin: 0; }
+.stk-guide-lib-head .menu_button { flex: 0 0 auto; margin: 0; }
+.stk-guide-lib-item textarea { width: 100%; box-sizing: border-box; }
+.stk-guide-lib-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.stk-guide-import-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 6px 0;
+}
+.stk-guide-import-row input { margin-top: 3px; }
+.stk-guide-import-row small { opacity: 0.65; }
+
+/* Guide на узком экране: отдельная G не встаёт третьей в столбик к меню и палочке —
+   о взведённом гайде говорит точка на волшебной палочке, открывается гайд из её меню. */
+@media (max-width: 1000px) {
+    #leftSendForm > #stk_guide_indicator { display: none; }
+    #extensionsMenuButton.stk-guide-armed { position: relative; }
+    #extensionsMenuButton.stk-guide-armed::after {
+        content: "";
+        position: absolute;
+        top: 3px;
+        right: 1px;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #4caf50;
+        box-shadow: 0 0 4px rgba(76, 175, 80, 0.7);
+        pointer-events: none;
+    }
+}
