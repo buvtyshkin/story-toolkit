@@ -1520,6 +1520,8 @@
     .stk-lore-hit .stk-lore-where .stk-lore-linkbtn { padding: 4px 0; }
 }
 
+/* ═══ end Lorebooks ═══ */
+
 /* Guide: набор гайдов — плашки */
 .stk-guide-chips {
     display: flex;
@@ -1584,6 +1586,92 @@
     #leftSendForm > #stk_guide_indicator { display: none; }
     #extensionsMenuButton.stk-guide-armed { position: relative; }
     #extensionsMenuButton.stk-guide-armed::after {
+        content: "";
+        position: absolute;
+        top: 3px;
+        right: 1px;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #4caf50;
+        box-shadow: 0 0 4px rgba(76, 175, 80, 0.7);
+        pointer-events: none;
+    }
+}
+
+/* ═══ Notes ═══ */
+
+/* Notes: active indicator in wand menu */
+#stk_notes_menu_item.stk-notes-active .extensionsMenuExtensionButton {
+    color: var(--golden, #d4af37);
+}
+#stk_notes_menu_item.stk-notes-active span {
+    font-weight: 600;
+}
+
+/* Notes: N indicator next to the chat input — green while notes are active */
+#leftSendForm > #stk_notes_indicator {
+    width: calc(var(--bottomFormBlockSize) * 0.7);
+    font-weight: 700;
+    font-size: 0.9em;
+    user-select: none;
+    opacity: 0.35;
+}
+#leftSendForm > #stk_notes_indicator.stk-notes-on {
+    color: #4caf50;
+    opacity: 1;
+    text-shadow: 0 0 4px rgba(76, 175, 80, 0.6);
+}
+
+/* Notes: modal */
+.stk-notes-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 10px;
+}
+.stk-notes-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 8px;
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    border-radius: 6px;
+}
+.stk-notes-text { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.stk-notes-left { font-size: 0.8em; opacity: 0.65; white-space: nowrap; margin-top: 2px; }
+.stk-notes-item .menu_button { flex: 0 0 auto; margin: 0; }
+.stk-notes-empty { font-size: 0.85em; opacity: 0.6; margin: 4px 0; }
+.stk-notes-ttl {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 16px;
+    margin-top: 8px;
+}
+.stk-notes-ttl > label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.stk-notes-ttl input[type="number"] { width: 80px; margin: 0; }
+.stk-notes-forever input { margin: 0; }
+.stk-notes-settings { margin-top: 12px; }
+.stk-notes-settings > summary { cursor: pointer; opacity: 0.75; }
+.stk-notes-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 8px 0;
+}
+.stk-notes-group > span { font-size: 0.85em; opacity: 0.7; }
+.stk-notes-group label { display: flex; align-items: baseline; gap: 6px; cursor: pointer; }
+.stk-notes-group small { opacity: 0.65; }
+.stk-notes-field { display: flex; flex-direction: column; gap: 3px; margin: 8px 0; font-size: 0.85em; }
+.stk-notes-field input[type="number"] { width: 80px; margin: 0; }
+
+/* Notes на узком экране: как у Guide — N спрятана, об активных заметках говорит
+   точка на волшебной палочке (та же, что у Guide), открываются заметки из её меню. */
+@media (max-width: 1000px) {
+    #leftSendForm > #stk_notes_indicator { display: none; }
+    #extensionsMenuButton.stk-notes-armed { position: relative; }
+    #extensionsMenuButton.stk-notes-armed::after {
         content: "";
         position: absolute;
         top: 3px;

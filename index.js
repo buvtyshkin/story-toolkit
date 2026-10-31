@@ -5,6 +5,7 @@
 //    🎬 Director — пошаговый сюжетный план (ex Plot Director)
 //    🔥 Forge    — генерация вариантов вне чата (ex Story Forge)
 //    📚 Archive  — глобальное хранилище фрагментов (ex Story Archive)
+//    📝 Notes    — заметки мастеру со сроком жизни в ходах
 //    🧭 Guide    — направляемый ответ с жизненным циклом (новый)
 //    🪄 Little Helper — варианты хода за {{user}} (перевоплощение)
 //    🔎 Story Search — поиск по словам во всех чатах
@@ -19,6 +20,7 @@ import { extension_settings, patchFromContext, toolkitSettings, saveSettings, EX
 import { initDirector } from "./director.js";
 import { initForge } from "./forge.js";
 import { initArchive } from "./archive.js";
+import { initNotes } from "./notes.js";
 import { initGuide } from "./guide.js";
 import { initHelper } from "./helper.js";
 import { initSearch } from "./search.js";
@@ -28,6 +30,7 @@ const DEFAULT_MODULES = {
     director: true,
     forge: true,
     archive: true,
+    notes: true,
     guide: true,
     helper: true,
     search: true,
@@ -132,6 +135,7 @@ const MODULE_LABELS = {
     director: "🎬 Director — сюжетный план",
     forge: "🔥 Forge — генерация вариантов",
     archive: "📚 Archive — хранилище фрагментов",
+    notes: "📝 Notes — заметки мастеру со сроком",
     guide: "🧭 Guide — направляемый ответ",
     helper: "🪄 Little Helper — варианты хода за вас",
     search: "🔎 Story Search — поиск по всем чатам",
@@ -190,6 +194,8 @@ jQuery(async () => {
         ["director", initDirector],
         ["forge", initForge],
         ["archive", initArchive],
+        // Before Guide: both insert at the tail, so the later one ends up lower.
+        ["notes", initNotes],
         ["guide", initGuide],
         ["helper", initHelper],
         ["search", initSearch],
